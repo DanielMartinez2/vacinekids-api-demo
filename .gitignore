@@ -1,0 +1,10 @@
+node_modules/
+.env
+.env.*
+!.env.example
+generated/
+dist/
+coverage/
+.docker-data/
+.DS_Store
+npm-debug.log*

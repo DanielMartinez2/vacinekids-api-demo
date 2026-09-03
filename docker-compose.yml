@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: vacinekids-api-demo-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-vacinekids}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vacinekids_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-vacinekids_demo}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - vacinekids_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  vacinekids_postgres_data:

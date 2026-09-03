@@ -1,0 +1,47 @@
+{
+  "name": "vacinekids-api-demo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Demo REST API for the VacineKids portfolio project.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "test": "tsx scripts/run-tests.ts",
+    "test:unit": "tsx --test src/modules/catalog/catalog.schemas.test.ts scripts/integration-environment.test.ts",
+    "test:integration": "tsx scripts/run-integration-tests.ts",
+    "typecheck": "tsc --noEmit",
+    "prisma:format": "prisma format",
+    "prisma:generate": "prisma generate",
+    "prisma:validate": "prisma validate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:deploy": "prisma migrate deploy",
+    "prisma:studio": "prisma studio",
+    "db:verify": "tsx scripts/verify-database.ts",
+    "db:seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "^7.10.0",
+    "@prisma/client": "^7.10.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.0.0",
+    "express": "^5.1.0",
+    "helmet": "^8.0.0",
+    "pg": "^8.0.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.0",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.0.0",
+    "@types/supertest": "^6.0.0",
+    "prisma": "^7.10.0",
+    "supertest": "^7.1.4",
+    "tsx": "^4.0.0",
+    "typescript": "^5.8.0"
+  }
+}

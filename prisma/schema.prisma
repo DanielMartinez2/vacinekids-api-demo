@@ -1,0 +1,117 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Vaccine {
+  id           String    @id @default(uuid()) @db.Uuid
+  name         String    @db.VarChar(160)
+  description  String
+  manufacturer String    @db.VarChar(160)
+  price        Decimal   @db.Decimal(12, 2)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt    DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  faqs         VaccineFaq[]
+  ageRanges    VaccineAgeRange[]
+  packageLinks PackageVaccine[]
+
+  @@unique([name, manufacturer])
+  @@index([deletedAt])
+  @@index([name])
+  @@map("vaccines")
+}
+
+model VaccineFaq {
+  id        String   @id @default(uuid()) @db.Uuid
+  vaccineId String   @map("vaccine_id") @db.Uuid
+  position  Int
+  question  String
+  answer    String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  vaccine Vaccine @relation(fields: [vaccineId], references: [id], onDelete: Cascade)
+
+  @@unique([vaccineId, position])
+  @@map("vaccine_faqs")
+}
+
+model AgeRange {
+  id           String    @id @default(uuid()) @db.Uuid
+  slug         String    @unique @db.VarChar(60)
+  name         String    @db.VarChar(100)
+  minAgeMonths Int?      @map("min_age_months")
+  maxAgeMonths Int?      @map("max_age_months")
+  sortOrder    Int       @default(0) @map("sort_order")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt    DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  vaccines VaccineAgeRange[]
+
+  @@index([deletedAt, sortOrder])
+  @@map("age_ranges")
+}
+
+model VaccineAgeRange {
+  vaccineId  String @map("vaccine_id") @db.Uuid
+  ageRangeId String @map("age_range_id") @db.Uuid
+
+  vaccine  Vaccine  @relation(fields: [vaccineId], references: [id], onDelete: Cascade)
+  ageRange AgeRange @relation(fields: [ageRangeId], references: [id], onDelete: Restrict)
+
+  @@id([vaccineId, ageRangeId])
+  @@index([ageRangeId])
+  @@map("vaccine_age_ranges")
+}
+
+model Package {
+  id          String    @id @default(uuid()) @db.Uuid
+  name        String    @unique @db.VarChar(160)
+  description String
+  price       Decimal   @db.Decimal(12, 2)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  faqs     PackageFaq[]
+  vaccines PackageVaccine[]
+
+  @@index([deletedAt])
+  @@index([name])
+  @@map("packages")
+}
+
+model PackageFaq {
+  id        String   @id @default(uuid()) @db.Uuid
+  packageId String   @map("package_id") @db.Uuid
+  position  Int
+  question  String
+  answer    String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  package Package @relation(fields: [packageId], references: [id], onDelete: Cascade)
+
+  @@unique([packageId, position])
+  @@map("package_faqs")
+}
+
+model PackageVaccine {
+  packageId String @map("package_id") @db.Uuid
+  vaccineId String @map("vaccine_id") @db.Uuid
+  quantity  Int    @default(1)
+
+  package Package @relation(fields: [packageId], references: [id], onDelete: Cascade)
+  vaccine Vaccine @relation(fields: [vaccineId], references: [id], onDelete: Restrict)
+
+  @@id([packageId, vaccineId])
+  @@index([vaccineId])
+  @@map("package_vaccines")
+}
