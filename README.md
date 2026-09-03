@@ -30,7 +30,7 @@ As rotas de escrita estão intencionalmente sem autenticação e não devem ser 
 
 ## Stack
 
-- Node.js 22.18+; Node.js 24 recomendado
+- Node.js 24 LTS
 - Express 5
 - TypeScript em modo estrito
 - PostgreSQL 18 no ambiente Docker demonstrativo
@@ -57,7 +57,7 @@ Vaccine ──< VaccineFaq
 
 ## Requisitos
 
-- Node.js 22.18 ou superior
+- Node.js 24 LTS
 - npm
 - Uma instância PostgreSQL acessível, local, Docker ou hospedada
 - Docker Compose somente se for utilizada a opção de container
@@ -194,6 +194,28 @@ Endereços padrão:
 
 - API: `http://localhost:3001/api/v1`
 - Health check: `http://localhost:3001/health`
+
+## Publicação no Render
+
+Configure o repositório do backend como um **Web Service** com:
+
+```text
+Build Command: npm ci --include=dev && npm run build
+Start Command: npm start
+Health Check Path: /health
+```
+
+O serviço usa a porta fornecida por `PORT` e escuta em `0.0.0.0`; localmente, a porta padrão é `3001`. O startup inicia somente a API e não executa migration nem seed.
+
+Variáveis necessárias no runtime do Render:
+
+```dotenv
+NODE_ENV=production
+DATABASE_URL=<conexão pooled do Neon>
+FRONTEND_URL=https://<usuario>.github.io
+```
+
+O Render fornece `PORT` automaticamente. `DATABASE_URL_UNPOOLED`, `TEST_DATABASE_URL` e `NEON_BRANCH` não são necessárias para iniciar a API. A origem do GitHub Pages não inclui o caminho `/vacinekids-web`.
 
 O health check retorna HTTP `200` quando processo e banco estão disponíveis. Se o processo estiver funcionando, mas o PostgreSQL não responder, retorna HTTP `503`, `status: "degraded"` e `database: "disconnected"`. Credenciais e detalhes internos não são expostos.
 

@@ -5,10 +5,11 @@
   "description": "Demo REST API for the VacineKids portfolio project.",
   "type": "module",
   "engines": {
-    "node": ">=22.18.0"
+    "node": ">=24.0.0 <25"
   },
   "scripts": {
     "dev": "tsx watch src/server.ts",
+    "build": "npm run prisma:generate && npm run typecheck",
     "start": "tsx src/server.ts",
     "test": "tsx scripts/run-tests.ts",
     "test:unit": "tsx --test src/modules/catalog/catalog.schemas.test.ts scripts/integration-environment.test.ts",
@@ -33,6 +34,7 @@
     "express": "^5.1.0",
     "helmet": "^8.0.0",
     "pg": "^8.0.0",
+    "tsx": "^4.0.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {
@@ -43,7 +45,6 @@
     "@types/supertest": "^6.0.0",
     "prisma": "^7.10.0",
     "supertest": "^7.1.4",
-    "tsx": "^4.0.0",
     "typescript": "^5.8.0"
   }
 }

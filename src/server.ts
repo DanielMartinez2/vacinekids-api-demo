@@ -2,9 +2,9 @@ import { app } from "./app";
 import { env } from "./config/env";
 import { prisma } from "./config/database";
 
-const server = app.listen(env.PORT, () => {
-  console.log(`VacineKids API demo running on http://localhost:${env.PORT}`);
-  console.log(`Health check: http://localhost:${env.PORT}/health`);
+const server = app.listen(env.PORT, "0.0.0.0", () => {
+  console.log(`VacineKids API demo listening on port ${env.PORT}`);
+  console.log(`Health check available at /health`);
 });
 
 const shutdown = (signal: string) => {
