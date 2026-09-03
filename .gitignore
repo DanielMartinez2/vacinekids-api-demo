@@ -8,3 +8,5 @@ coverage/
 .docker-data/
 .DS_Store
 npm-debug.log*
+.neon
+.agents/

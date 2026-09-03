@@ -2,10 +2,10 @@ import "dotenv/config";
 import assert from "node:assert/strict";
 import pg from "pg";
 
-const databaseUrl = process.env.DATABASE_URL;
+const databaseUrl = process.env.DATABASE_URL_UNPOOLED ?? process.env.DATABASE_URL;
 
 if (!databaseUrl) {
-  throw new Error("DATABASE_URL is required to verify the database");
+  throw new Error("DATABASE_URL_UNPOOLED or DATABASE_URL is required to verify the database");
 }
 
 const configuredSchema = new URL(databaseUrl).searchParams.get("schema") ?? "public";

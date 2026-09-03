@@ -2,10 +2,10 @@ import "dotenv/config";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../generated/prisma/client";
 
-const databaseUrl = process.env.DATABASE_URL;
+const databaseUrl = process.env.DATABASE_URL_UNPOOLED ?? process.env.DATABASE_URL;
 
 if (!databaseUrl) {
-  throw new Error("DATABASE_URL is required to run the catalog seed");
+  throw new Error("DATABASE_URL_UNPOOLED or DATABASE_URL is required to run the catalog seed");
 }
 
 const prisma = new PrismaClient({

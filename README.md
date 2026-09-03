@@ -94,6 +94,8 @@ FRONTEND_URL=http://localhost:5173
 
 `DATABASE_URL` é usada pela aplicação e pelo seed de desenvolvimento e deve selecionar explicitamente `schema=public`.
 
+Em ambientes Neon, `DATABASE_URL` mantém a conexão pooled para o runtime da API. Quando `DATABASE_URL_UNPOOLED` estiver disponível, a Prisma CLI a utiliza para migrations e operações administrativas; no desenvolvimento local, a configuração recorre explicitamente a `DATABASE_URL` quando a conexão unpooled não existir.
+
 `TEST_DATABASE_URL` é exclusiva dos testes de integração e deve selecionar explicitamente `schema=integration_test`. O runner aborta antes de migrations ou cleanup quando a URL está ausente, é igual à URL de desenvolvimento, aponta para `public` ou não permite confirmar o schema isolado.
 
 Para PostgreSQL hospedado, basta substituir as URLs. Caso o provedor exija TLS, configure os parâmetros SSL indicados pelo próprio provedor na URL.
