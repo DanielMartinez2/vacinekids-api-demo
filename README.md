@@ -14,11 +14,12 @@ Implementado nesta etapa:
 - faixas etárias;
 - pacotes, FAQs e composição pacote–vacina;
 - CRUD REST versionado em `/api/v1`;
-- migration, seed fictício e testes de integração.
+- migrations, seed fictício e testes de integração;
+- autenticação server-side (cadastro, login, logout e `/auth/me`);
+- autorização CUSTOMER/ADMIN e CLI local de promoção administrativa.
 
 Ainda não implementado:
 
-- autenticação e autorização;
 - clientes e dependentes;
 - documentos;
 - pedidos e itens de pedido;
@@ -26,7 +27,7 @@ Ainda não implementado:
 - agendamentos e reservas;
 - estoque transacional.
 
-As rotas de escrita estão intencionalmente sem autenticação e não devem ser expostas publicamente nesta etapa.
+As escritas do catálogo e `includeDeleted=true` exigem sessão ADMIN. Leituras normais continuam públicas. A publicação da Fase 1A abrange somente o backend: o frontend público permanece sem autenticação e não utiliza cookies cross-site. Consulte [o contrato e o guia de segurança](docs/auth-phase-1a.md).
 
 ## Stack
 
@@ -96,9 +97,9 @@ FRONTEND_URL=http://localhost:5173
 
 Em ambientes Neon, `DATABASE_URL` mantém a conexão pooled para o runtime da API. Quando `DATABASE_URL_UNPOOLED` estiver disponível, a Prisma CLI a utiliza para migrations e operações administrativas; no desenvolvimento local, a configuração recorre explicitamente a `DATABASE_URL` quando a conexão unpooled não existir.
 
-`TEST_DATABASE_URL` é exclusiva dos testes de integração e deve selecionar explicitamente `schema=integration_test`. O runner aborta antes de migrations ou cleanup quando a URL está ausente, é igual à URL de desenvolvimento, aponta para `public` ou não permite confirmar o schema isolado.
+`TEST_DATABASE_URL` é exclusiva dos testes de integração e deve selecionar explicitamente `schema=integration_test`. O runner valida ambas as URLs antes de qualquer conexão: somente loopback (`localhost`, `127.0.0.1`, `[::1]`), mesmo host/porta, banco `vacinekids_demo`, desenvolvimento em `public`, testes em `integration_test` e apenas o parâmetro `schema`. URLs remotas (incluindo Neon/Render), ambíguas ou iguais são rejeitadas. Os arquivos de integração também possuem bootstrap obrigatório antes de importar app/Prisma. Não use `npm test` com `DATABASE_URL` apontando ao Neon: configure as URLs locais explicitamente; o runner abortará nesse cenário.
 
-Para PostgreSQL hospedado, basta substituir as URLs. Caso o provedor exija TLS, configure os parâmetros SSL indicados pelo próprio provedor na URL.
+Para o runtime PostgreSQL hospedado, configure a URL e o TLS indicados pelo provedor. Isso NÃO se aplica aos testes ou à CLI administrativa local da Fase 1A.
 
 ## PostgreSQL local já instalado
 
@@ -241,7 +242,7 @@ npm test
 
 O runner de integração valida o isolamento antes de qualquer operação destrutiva e só então substitui `DATABASE_URL` pela `TEST_DATABASE_URL` no processo filho. O `PrismaPg` recebe também o schema extraído da URL, garantindo que as queries do Client sejam qualificadas para `integration_test`.
 
-As migrations são aplicadas nesse mesmo ambiente. Antes e depois da suíte, o runner compara contagens e fingerprints das tabelas de catálogo em `public`; ao final, também confirma que o cleanup deixou as tabelas de catálogo de `integration_test` vazias.
+As migrations são aplicadas nesse mesmo ambiente. Antes e depois da suíte, o runner compara contagens e fingerprints das tabelas de catálogo, `users` e `sessions` em `public`; ao final, também confirma que o cleanup deixou essas tabelas de `integration_test` vazias. Aplique primeiro a migration local de desenvolvimento com `npm run db:migrate:local`. As suítes de catálogo e auth são executadas sequencialmente e não utilizam Neon. Tokens/hashes/linhas dos snapshots nunca são impressos.
 
 Cobertura atual de integração:
 

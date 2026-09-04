@@ -5,7 +5,8 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 const tsxCli = fileURLToPath(new URL("../node_modules/tsx/dist/cli.mjs", import.meta.url));
 const unitTests = [
   fileURLToPath(new URL("../src/modules/catalog/catalog.schemas.test.ts", import.meta.url)),
-  fileURLToPath(new URL("./integration-environment.test.ts", import.meta.url))
+  fileURLToPath(new URL("./integration-environment.test.ts", import.meta.url)),
+  fileURLToPath(new URL("../src/modules/auth/auth.unit.test.ts", import.meta.url))
 ];
 const integrationRunner = fileURLToPath(new URL("./run-integration-tests.ts", import.meta.url));
 
@@ -16,4 +17,4 @@ const run = (args: string[]) => {
 };
 
 run([tsxCli, "--test", ...unitTests]);
-run([tsxCli, integrationRunner]);
+if (!process.argv.includes("--unit")) run([tsxCli, integrationRunner]);

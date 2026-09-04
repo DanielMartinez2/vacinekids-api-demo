@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import request from "supertest";
-import { app } from "../../app";
-import { prisma } from "../../config/database";
+import "../../../scripts/integration-bootstrap";
+
+const { app } = await import("../../app");
+const { prisma } = await import("../../config/database");
+const { hashPassword } = await import("../auth/auth.password");
+const api = request.agent(app);
+api.set("Origin", "http://localhost:5173").set("X-VacineKids-CSRF", "1");
 
 let childAgeRangeId: string;
 let adultAgeRangeId: string;
@@ -26,7 +31,7 @@ const clearCatalog = async () => {
 };
 
 const createAgeRange = async (slug: string, name: string, minAgeMonths: number, maxAgeMonths: number | null) => {
-  const response = await request(app).post("/api/v1/age-ranges").send({
+  const response = await api.post("/api/v1/age-ranges").send({
     slug,
     name,
     minAgeMonths,
@@ -38,7 +43,7 @@ const createAgeRange = async (slug: string, name: string, minAgeMonths: number, 
 };
 
 const createVaccine = async (name: string, manufacturer: string, ageRangeIds: string[]) => {
-  const response = await request(app).post("/api/v1/vaccines").send({
+  const response = await api.post("/api/v1/vaccines").send({
     name,
     description: `${name} usada somente pelos testes de integração.`,
     manufacturer,
@@ -54,7 +59,7 @@ const createPackage = async (
   name: string,
   vaccines: Array<{ vaccineId: string; quantity?: number }>
 ) => {
-  const response = await request(app).post("/api/v1/packages").send({
+  const response = await api.post("/api/v1/packages").send({
     name,
     description: `${name} usado somente pelos testes de integração.`,
     price: 349.9,
@@ -67,24 +72,31 @@ const createPackage = async (
 
 before(async () => {
   await clearCatalog();
+  await prisma.session.deleteMany();
+  await prisma.user.deleteMany();
+  await prisma.user.create({ data: { email: "catalog-admin@example.test", role: "ADMIN", passwordHash: await hashPassword("catalog fixture password") } });
+  const login = await api.post("/api/v1/auth/login").send({ email: "catalog-admin@example.test", password: "catalog fixture password" });
+  assert.equal(login.status, 200);
   childAgeRangeId = await createAgeRange(childAgeRangeSlug, "Criança Teste", 24, 143);
   adultAgeRangeId = await createAgeRange(adultAgeRangeSlug, "Adulto Teste", 216, 719);
 });
 
 after(async () => {
   await clearCatalog();
+  await prisma.session.deleteMany();
+  await prisma.user.deleteMany();
   await prisma.$disconnect();
 });
 
 test("health check confirms the process and PostgreSQL connection", async () => {
-  const response = await request(app).get("/health");
+  const response = await api.get("/health");
   assert.equal(response.status, 200);
   assert.equal(response.body.data.process, "running");
   assert.equal(response.body.data.database, "connected");
 });
 
 test("creates a vaccine with FAQ and age range", async () => {
-  const response = await request(app).post("/api/v1/vaccines").send({
+  const response = await api.post("/api/v1/vaccines").send({
     name: "Vacina Integração A",
     description: "Produto fictício para testar criação no PostgreSQL.",
     manufacturer: "Laboratório Teste",
@@ -101,7 +113,7 @@ test("creates a vaccine with FAQ and age range", async () => {
 });
 
 test("lists active vaccines", async () => {
-  const response = await request(app).get("/api/v1/vaccines");
+  const response = await api.get("/api/v1/vaccines");
   assert.equal(response.status, 200);
   assert.equal(response.body.data.some((item: { id: string }) => item.id === primaryVaccineId), true);
   assert.equal(response.body.meta.total, 1);
@@ -110,17 +122,17 @@ test("lists active vaccines", async () => {
 test("filters vaccines by search and age range slug", async () => {
   await createVaccine("Vacina Somente Adulto", "Bio Teste", [adultAgeRangeId]);
 
-  const bySearch = await request(app).get("/api/v1/vaccines").query({ search: "integração a" });
+  const bySearch = await api.get("/api/v1/vaccines").query({ search: "integração a" });
   assert.equal(bySearch.status, 200);
   assert.deepEqual(bySearch.body.data.map((item: { id: string }) => item.id), [primaryVaccineId]);
 
-  const byAge = await request(app).get("/api/v1/vaccines").query({ ageRange: "crianca-teste" });
+  const byAge = await api.get("/api/v1/vaccines").query({ ageRange: "crianca-teste" });
   assert.equal(byAge.status, 200);
   assert.deepEqual(byAge.body.data.map((item: { id: string }) => item.id), [primaryVaccineId]);
 });
 
 test("updates a vaccine", async () => {
-  const response = await request(app).patch(`/api/v1/vaccines/${primaryVaccineId}`).send({
+  const response = await api.patch(`/api/v1/vaccines/${primaryVaccineId}`).send({
     name: "Vacina Integração Atualizada",
     price: 179.5
   });
@@ -130,13 +142,13 @@ test("updates a vaccine", async () => {
 });
 
 test("soft deletes a vaccine and hides it from list and detail by default", async () => {
-  const deleted = await request(app).delete(`/api/v1/vaccines/${primaryVaccineId}`);
+  const deleted = await api.delete(`/api/v1/vaccines/${primaryVaccineId}`);
   assert.equal(deleted.status, 204);
 
-  const list = await request(app).get("/api/v1/vaccines");
+  const list = await api.get("/api/v1/vaccines");
   assert.equal(list.body.data.some((item: { id: string }) => item.id === primaryVaccineId), false);
 
-  const detail = await request(app).get(`/api/v1/vaccines/${primaryVaccineId}`);
+  const detail = await api.get(`/api/v1/vaccines/${primaryVaccineId}`);
   assert.equal(detail.status, 404);
 
   const databaseRecord = await prisma.vaccine.findUniqueOrThrow({ where: { id: primaryVaccineId } });
@@ -147,7 +159,7 @@ test("creates a package with vaccine composition", async () => {
   packageVaccineAId = await createVaccine("Vacina Pacote A", "Instituto Teste", [childAgeRangeId]);
   packageVaccineBId = await createVaccine("Vacina Pacote B", "Instituto Teste", [adultAgeRangeId]);
 
-  const response = await request(app).post("/api/v1/packages").send({
+  const response = await api.post("/api/v1/packages").send({
     name: "Pacote Integração",
     description: "Pacote fictício usado somente nos testes de integração.",
     price: 349.9,
@@ -167,7 +179,7 @@ test("creates a package with vaccine composition", async () => {
 });
 
 test("lists packages unchanged when ageRange is absent", async () => {
-  const response = await request(app).get("/api/v1/packages");
+  const response = await api.get("/api/v1/packages");
 
   assert.equal(response.status, 200);
   assert.deepEqual(response.body.data.map((item: { id: string }) => item.id), [packageId]);
@@ -175,7 +187,7 @@ test("lists packages unchanged when ageRange is absent", async () => {
 });
 
 test("filters a package through a compatible vaccine age range", async () => {
-  const response = await request(app).get("/api/v1/packages").query({ ageRange: childAgeRangeSlug });
+  const response = await api.get("/api/v1/packages").query({ ageRange: childAgeRangeSlug });
 
   assert.equal(response.status, 200);
   assert.deepEqual(response.body.data.map((item: { id: string }) => item.id), [packageId]);
@@ -187,7 +199,7 @@ test("does not return a package without a compatible vaccine", async () => {
     { vaccineId: packageVaccineBId, quantity: 1 }
   ]);
 
-  const response = await request(app).get("/api/v1/packages").query({ ageRange: childAgeRangeSlug });
+  const response = await api.get("/api/v1/packages").query({ ageRange: childAgeRangeSlug });
   const returnedIds = response.body.data.map((item: { id: string }) => item.id);
 
   assert.equal(response.status, 200);
@@ -206,7 +218,7 @@ test("returns a package only once when multiple vaccines match the age range", a
     { vaccineId: secondChildVaccineId, quantity: 1 }
   ]);
 
-  const response = await request(app).get("/api/v1/packages").query({ ageRange: childAgeRangeSlug });
+  const response = await api.get("/api/v1/packages").query({ ageRange: childAgeRangeSlug });
   const occurrences = response.body.data.filter(
     (item: { id: string }) => item.id === packageWithTwoMatchesId
   );
@@ -220,7 +232,7 @@ let unmatchedAgeRangeId: string;
 test("returns an empty list for a valid age range without matches", async () => {
   unmatchedAgeRangeId = await createAgeRange(unmatchedAgeRangeSlug, "Sem Pacotes Teste", 900, null);
 
-  const response = await request(app).get("/api/v1/packages").query({
+  const response = await api.get("/api/v1/packages").query({
     ageRange: unmatchedAgeRangeSlug
   });
 
@@ -231,7 +243,7 @@ test("returns an empty list for a valid age range without matches", async () => 
 });
 
 test("returns an empty list for a nonexistent age range slug", async () => {
-  const response = await request(app).get("/api/v1/packages").query({
+  const response = await api.get("/api/v1/packages").query({
     ageRange: "faixa-inexistente"
   });
 
@@ -241,14 +253,14 @@ test("returns an empty list for a nonexistent age range slug", async () => {
 });
 
 test("returns validation error for an invalid ageRange format", async () => {
-  const response = await request(app).get("/api/v1/packages").query({ ageRange: "a".repeat(61) });
+  const response = await api.get("/api/v1/packages").query({ ageRange: "a".repeat(61) });
 
   assert.equal(response.status, 422);
   assert.equal(response.body.error.code, "VALIDATION_ERROR");
 });
 
 test("combines ageRange and search with AND semantics", async () => {
-  const response = await request(app).get("/api/v1/packages").query({
+  const response = await api.get("/api/v1/packages").query({
     ageRange: childAgeRangeSlug,
     search: "fictício"
   });
@@ -262,12 +274,12 @@ test("applies the age range filter before pagination and count", async () => {
   await createPackage("Pacote Criança Página A", [{ vaccineId: packageVaccineAId, quantity: 1 }]);
   await createPackage("Pacote Criança Página B", [{ vaccineId: packageVaccineAId, quantity: 1 }]);
 
-  const firstPage = await request(app).get("/api/v1/packages").query({
+  const firstPage = await api.get("/api/v1/packages").query({
     ageRange: childAgeRangeSlug,
     page: 1,
     pageSize: 2
   });
-  const secondPage = await request(app).get("/api/v1/packages").query({
+  const secondPage = await api.get("/api/v1/packages").query({
     ageRange: childAgeRangeSlug,
     page: 2,
     pageSize: 2
@@ -296,10 +308,10 @@ test("does not match a package through a soft-deleted vaccine", async () => {
     { vaccineId, quantity: 1 }
   ]);
 
-  const deleted = await request(app).delete(`/api/v1/vaccines/${vaccineId}`);
+  const deleted = await api.delete(`/api/v1/vaccines/${vaccineId}`);
   assert.equal(deleted.status, 204);
 
-  const response = await request(app).get("/api/v1/packages").query({ ageRange: childAgeRangeSlug });
+  const response = await api.get("/api/v1/packages").query({ ageRange: childAgeRangeSlug });
   assert.equal(
     response.body.data.some((item: { id: string }) => item.id === packageWithDeletedVaccineId),
     false
@@ -314,10 +326,10 @@ test("does not match a package through a soft-deleted age range", async () => {
     { vaccineId, quantity: 1 }
   ]);
 
-  const deleted = await request(app).delete(`/api/v1/age-ranges/${unmatchedAgeRangeId}`);
+  const deleted = await api.delete(`/api/v1/age-ranges/${unmatchedAgeRangeId}`);
   assert.equal(deleted.status, 204);
 
-  const response = await request(app).get("/api/v1/packages").query({
+  const response = await api.get("/api/v1/packages").query({
     ageRange: unmatchedAgeRangeSlug
   });
   assert.equal(response.status, 200);
@@ -332,10 +344,10 @@ test("keeps a soft-deleted package out of an age range result", async () => {
   const deletedPackageId = await createPackage("Pacote Excluído para Filtro", [
     { vaccineId: packageVaccineAId, quantity: 1 }
   ]);
-  const deleted = await request(app).delete(`/api/v1/packages/${deletedPackageId}`);
+  const deleted = await api.delete(`/api/v1/packages/${deletedPackageId}`);
   assert.equal(deleted.status, 204);
 
-  const response = await request(app).get("/api/v1/packages").query({ ageRange: childAgeRangeSlug });
+  const response = await api.get("/api/v1/packages").query({ ageRange: childAgeRangeSlug });
   assert.equal(
     response.body.data.some((item: { id: string }) => item.id === deletedPackageId),
     false
@@ -343,7 +355,7 @@ test("keeps a soft-deleted package out of an age range result", async () => {
 });
 
 test("atomically replaces package FAQs", async () => {
-  const response = await request(app).patch(`/api/v1/packages/${packageId}`).send({
+  const response = await api.patch(`/api/v1/packages/${packageId}`).send({
     faqs: [{ question: "FAQ substituta?", answer: "Única resposta atual." }]
   });
   assert.equal(response.status, 200);
@@ -355,7 +367,7 @@ test("atomically replaces package FAQs", async () => {
 });
 
 test("atomically replaces package vaccine composition", async () => {
-  const response = await request(app).patch(`/api/v1/packages/${packageId}`).send({
+  const response = await api.patch(`/api/v1/packages/${packageId}`).send({
     vaccines: [{ vaccineId: packageVaccineBId, quantity: 3 }]
   });
   assert.equal(response.status, 200);
@@ -366,7 +378,7 @@ test("atomically replaces package vaccine composition", async () => {
 });
 
 test("returns 422 for invalid catalog data", async () => {
-  const response = await request(app).post("/api/v1/vaccines").send({
+  const response = await api.post("/api/v1/vaccines").send({
     name: "",
     description: "",
     manufacturer: "",
@@ -378,14 +390,14 @@ test("returns 422 for invalid catalog data", async () => {
 });
 
 test("lists only active age ranges and soft deletes packages", async () => {
-  const ageRanges = await request(app).get("/api/v1/age-ranges");
+  const ageRanges = await api.get("/api/v1/age-ranges");
   assert.equal(ageRanges.status, 200);
   assert.equal(ageRanges.body.data.length, 2);
 
-  const deleted = await request(app).delete(`/api/v1/packages/${packageId}`);
+  const deleted = await api.delete(`/api/v1/packages/${packageId}`);
   assert.equal(deleted.status, 204);
 
-  const packages = await request(app).get("/api/v1/packages");
+  const packages = await api.get("/api/v1/packages");
   assert.equal(packages.status, 200);
   assert.equal(packages.body.data.some((item: { id: string }) => item.id === packageId), false);
 });

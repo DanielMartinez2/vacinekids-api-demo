@@ -13,7 +13,9 @@ const catalogTables = [
   "packages",
   "vaccine_age_ranges",
   "vaccine_faqs",
-  "vaccines"
+  "vaccines",
+  "users",
+  "sessions"
 ] as const;
 
 type CatalogSnapshot = Record<
@@ -63,9 +65,12 @@ const tsxCli = fileURLToPath(new URL("../node_modules/tsx/dist/cli.mjs", import.
 const integrationTest = fileURLToPath(
   new URL("../src/modules/catalog/catalog.integration.test.ts", import.meta.url)
 );
+const authIntegrationTest = fileURLToPath(new URL("../src/modules/auth/auth.integration.test.ts", import.meta.url));
 const testEnv = {
   ...process.env,
   NODE_ENV: "test",
+  INTEGRATION_DEVELOPMENT_DATABASE_URL: environment.developmentDatabaseUrl,
+  DATABASE_URL_UNPOOLED: "",
   DATABASE_URL: environment.testDatabaseUrl,
   FRONTEND_URL: process.env.FRONTEND_URL ?? "http://localhost:5173"
 };
@@ -88,7 +93,7 @@ const main = async () => {
   let executionError: unknown;
   try {
     run([prismaCli, "migrate", "deploy"]);
-    run([tsxCli, "--test", "--test-concurrency=1", integrationTest]);
+    run([tsxCli, "--test", "--test-concurrency=1", integrationTest, authIntegrationTest]);
   } catch (error) {
     executionError = error;
   }

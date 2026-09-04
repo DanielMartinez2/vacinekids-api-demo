@@ -12,7 +12,7 @@
     "build": "npm run prisma:generate && npm run typecheck",
     "start": "tsx src/server.ts",
     "test": "tsx scripts/run-tests.ts",
-    "test:unit": "tsx --test src/modules/catalog/catalog.schemas.test.ts scripts/integration-environment.test.ts",
+    "test:unit": "tsx scripts/run-tests.ts --unit",
     "test:integration": "tsx scripts/run-integration-tests.ts",
     "typecheck": "tsc --noEmit",
     "prisma:format": "prisma format",
@@ -22,22 +22,28 @@
     "prisma:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
     "db:verify": "tsx scripts/verify-database.ts",
-    "db:seed": "tsx prisma/seed.ts"
+    "db:seed": "tsx prisma/seed.ts",
+    "db:migrate:local": "tsx scripts/migrate-local.ts",
+    "user:promote": "tsx scripts/promote-admin.ts"
   },
   "dependencies": {
     "@neon/config": "^1.2.0",
     "@neon/env": "^1.2.0",
     "@prisma/adapter-pg": "^7.10.0",
     "@prisma/client": "^7.10.0",
+    "argon2": "^0.45.1",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^17.0.0",
     "express": "^5.1.0",
+    "express-rate-limit": "^8.7.0",
     "helmet": "^8.0.0",
     "pg": "^8.0.0",
     "tsx": "^4.0.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {
+    "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.0",
     "@types/express": "^5.0.0",
     "@types/node": "^22.0.0",
