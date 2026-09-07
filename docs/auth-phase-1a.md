@@ -1,6 +1,6 @@
 # Autenticação e autorização — Fase 1A (backend)
 
-Esta fase modifica e publica somente o backend. Não inclui frontend auth, Profile, dependentes, recuperação de senha, confirmação de email, OAuth/MFA/passkeys, checkout, pedidos, pagamentos, agendamento, estoque ou admin UI. A publicação não habilita autenticação no GitHub Pages nem cria usuários de produção. Domínios, proxy e rate limiting permanecem pendências antes da adoção da autenticação pelo frontend.
+Esta fase não inclui Profile, dependentes, recuperação de senha, confirmação de email, OAuth/MFA/passkeys, checkout, pedidos, pagamentos, agendamento, estoque ou admin UI. A Fase 1C-A habilita temporariamente o frontend de autenticação no GitHub Pages para medir a compatibilidade cross-site antes de decidir sobre domínio próprio.
 
 ## Banco e migration
 
@@ -62,9 +62,9 @@ Erros seguem `{data:null,error:{code,message,details?}}`: 400 JSON malformado; 4
 
 Local: `vacinekids_session; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800`, sem Secure nem Domain. Use o mesmo hostname (localhost) no frontend e API.
 
-Produção (`NODE_ENV=production`): `__Host-vacinekids_session; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=604800`, sem Domain. Os atributos são derivados de NODE_ENV e testados; não dependem de headers de proxy.
+Produção (`NODE_ENV=production`): `__Host-vacinekids_session; HttpOnly; Secure; SameSite=None; Path=/; Max-Age=604800`, sem Domain. Os atributos são derivados de NODE_ENV e testados; não dependem de headers de proxy.
 
-GitHub Pages e onrender.com são cross-site. Esta fase NÃO usa SameSite=None nem Web Storage para contornar isso. Antes de integrar autenticação no frontend, configurar, por exemplo, `app.example.com` e `api.example.com` com HTTPS. Continuam cross-origin, exigindo credentials include no fetch, mas são same-site. A publicação atual mantém somente as consultas públicas do frontend, sem cadastro/login ou teste de cookies cross-site.
+GitHub Pages e onrender.com são cross-site. Para esta experiência controlada, somente produção usa `SameSite=None`; o token continua exclusivamente no cookie HttpOnly e as requisições autenticadas usam `credentials: include`. A compatibilidade real será medida antes da decisão sobre domínios próprios.
 
 FRONTEND_URL deve ser origem HTTP(S) exata (sem caminho, slash final, query ou credenciais). Toda escrita em `/api/v1` exige Origin exatamente igual e `X-VacineKids-CSRF: 1`; ausência/null/origem diferente retorna 403 antes de efeitos colaterais. JSON exige application/json. Clientes não-browser que escrevem via HTTP também seguem o contrato, além de apresentar sessão autorizada. O header fixo força preflight; não é senha ou autorização.
 
@@ -123,7 +123,7 @@ Unitários HTTP usam serviço injetado sem conectar ao banco. Integração valid
 
 Runner verifica fingerprints de public antes/depois e limpeza de todas as tabelas do catálogo + users/sessions em integration_test. Fixtures ADMIN existem apenas no schema de teste. Testes de falha podem injetar indisponibilidade sem interromper PostgreSQL ou tocar dados públicos. Nenhum teste depende de Neon.
 
-Pendências antes da adoção da autenticação pelo frontend: domínios HTTPS same-site, teste de cookies em navegador real, benchmark no Render, configuração comprovada de proxy e decisão de store.
+Pendências antes da adoção definitiva da autenticação pelo frontend: matriz de navegadores reais, decisão sobre domínios HTTPS same-site, benchmark no Render, configuração comprovada de proxy e decisão de store.
 
 ## Risco transitivo aceito temporariamente para esta publicação
 

@@ -27,7 +27,7 @@ Ainda não implementado:
 - agendamentos e reservas;
 - estoque transacional.
 
-As escritas do catálogo e `includeDeleted=true` exigem sessão ADMIN. Leituras normais continuam públicas. A publicação da Fase 1A abrange somente o backend: o frontend público permanece sem autenticação e não utiliza cookies cross-site. Consulte [o contrato e o guia de segurança](docs/auth-phase-1a.md).
+As escritas do catálogo e `includeDeleted=true` exigem sessão ADMIN. Leituras normais continuam públicas. Para o teste controlado com o frontend no GitHub Pages, a sessão de produção usa cookie cross-site HttpOnly; o modo local preserva a política same-site. Consulte [o contrato e o guia de segurança](docs/auth-phase-1a.md).
 
 ## Stack
 

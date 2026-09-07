@@ -4,7 +4,10 @@ import { SESSION_SECONDS } from "./auth.session";
 export const sessionCookie = (environment: string) => ({
   name: environment === "production" ? "__Host-vacinekids_session" : "vacinekids_session",
   options: {
-    httpOnly: true, secure: environment === "production", sameSite: "lax", path: "/"
+    httpOnly: true,
+    secure: environment === "production",
+    sameSite: environment === "production" ? "none" : "lax",
+    path: "/"
   } satisfies CookieOptions
 });
 

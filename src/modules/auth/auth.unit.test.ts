@@ -4,10 +4,10 @@ import request from "supertest";
 import { registerSchema, loginSchema } from "./auth.schemas";
 import { hashPassword, verifyPassword, getDummyHash, passwordOptions } from "./auth.password";
 import { hashToken, newSessionToken, validToken, SESSION_SECONDS } from "./auth.session";
-import { sessionCookie } from "./auth.cookies";
+import { clearSessionCookie, sessionCookie, setSessionCookie } from "./auth.cookies";
 import { HttpError } from "../../lib/http-error";
 import { requireRole } from "../../middlewares/auth";
-import type { Request, Response } from "express";
+import type { CookieOptions, Request, Response } from "express";
 import type { AuthService, PublicUser } from "./auth.service";
 
 // Unit HTTP tests inject a service; never connect to the inherited .env database.
@@ -71,8 +71,46 @@ test("cookies explicitly distinguish local and production without Domain", () =>
   for (const environment of ["development", "test", "production"]) {
     const cookie = sessionCookie(environment);
     assert.equal(cookie.name, environment === "production" ? "__Host-vacinekids_session" : "vacinekids_session");
-    assert.deepEqual(cookie.options, { httpOnly: true, secure: environment === "production", sameSite: "lax", path: "/" });
+    assert.deepEqual(cookie.options, {
+      httpOnly: true,
+      secure: environment === "production",
+      sameSite: environment === "production" ? "none" : "lax",
+      path: "/"
+    });
   }
+});
+
+test("production login and logout use compatible __Host- cookie attributes", () => {
+  const operations: Array<{ action: "set" | "clear"; name: string; value?: string; options: CookieOptions }> = [];
+  const response = {
+    cookie(name: string, value: string, options: CookieOptions) {
+      operations.push({ action: "set", name, value, options });
+      return this;
+    },
+    clearCookie(name: string, options: CookieOptions) {
+      operations.push({ action: "clear", name, options });
+      return this;
+    }
+  } as unknown as Response;
+
+  setSessionCookie(response, "opaque-test-token", "production");
+  clearSessionCookie(response, "production");
+
+  assert.deepEqual(operations, [
+    {
+      action: "set",
+      name: "__Host-vacinekids_session",
+      value: "opaque-test-token",
+      options: { httpOnly: true, secure: true, sameSite: "none", path: "/", maxAge: SESSION_SECONDS * 1000 }
+    },
+    {
+      action: "clear",
+      name: "__Host-vacinekids_session",
+      options: { httpOnly: true, secure: true, sameSite: "none", path: "/" }
+    }
+  ]);
+  assert.equal("domain" in operations[0].options, false);
+  assert.equal("domain" in operations[1].options, false);
 });
 
 test("requireRole fails closed if invoked without requireAuth", () => {
