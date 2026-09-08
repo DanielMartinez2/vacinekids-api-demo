@@ -19,6 +19,8 @@ let fixtureHash: string;
 let app: ReturnType<typeof createApp>;
 
 const clear = async () => {
+  await prisma.dependent.deleteMany();
+  await prisma.customerProfile.deleteMany();
   await prisma.session.deleteMany();
   await prisma.user.deleteMany();
   await prisma.ageRange.deleteMany();
@@ -233,7 +235,7 @@ test("ADMIN CLI service defaults dry-run, requires exact confirmation, revokes a
   assert.equal((await prisma.user.findUniqueOrThrow({ where: { id: user.id } })).role, "CUSTOMER");
   await assert.rejects(promoteAdmin(prisma, email, "yes"));
   assert.equal(await prisma.session.count({ where: { revokedAt: null } }), 2);
-  const promoted = await promoteAdmin(prisma, email, `PROMOTE ${user.id}`);
+  const promoted = await promoteAdmin(prisma, email, `PROMOTE ${user.id}`, "integration_test");
   assert.equal(promoted.user.role, "ADMIN");
   assert.equal(promoted.revokedSessions, 2);
   assert.equal((await me(first.cookie)).status, 401);
@@ -249,11 +251,33 @@ test("CLI rejects disabled customers", async () => {
   assert.equal((await prisma.user.findUniqueOrThrow({ where: { id: user.id } })).role, "CUSTOMER");
 });
 
+test("CLI refuses promotion when CUSTOMER already has a profile and preserves all customer data and sessions", async () => {
+  const user = await fixture();
+  await login();
+  const profile = await prisma.customerProfile.create({
+    data: { userId: user.id, name: "Cliente com Perfil", phone: "+5511999990001" }
+  });
+  const dependent = await prisma.dependent.create({
+    data: { customerProfileId: profile.id, name: "Dependente Preservado", birthDate: new Date("2020-01-01T00:00:00.000Z") }
+  });
+
+  await assert.rejects(
+    promoteAdmin(prisma, email, `PROMOTE ${user.id}`, "integration_test"),
+    (error: unknown) => (error as { statusCode: number; code: string }).statusCode === 409 &&
+      (error as { code: string }).code === "CUSTOMER_PROFILE_EXISTS"
+  );
+
+  assert.equal((await prisma.user.findUniqueOrThrow({ where: { id: user.id } })).role, "CUSTOMER");
+  assert.equal((await prisma.customerProfile.findUniqueOrThrow({ where: { id: profile.id } })).name, "Cliente com Perfil");
+  assert.equal((await prisma.dependent.findUniqueOrThrow({ where: { id: dependent.id } })).name, "Dependente Preservado");
+  assert.equal(await prisma.session.count({ where: { userId: user.id, revokedAt: null } }), 1);
+});
+
 test("CLI transaction rolls back promotion when session revocation fails", async () => {
   const user = await fixture();
   await login();
   const failingDb = prisma.$extends({ query: { session: { updateMany: async () => { throw new Error("injected revocation failure"); } } } });
-  await assert.rejects(promoteAdmin(failingDb as unknown as typeof prisma, email, `PROMOTE ${user.id}`));
+  await assert.rejects(promoteAdmin(failingDb as unknown as typeof prisma, email, `PROMOTE ${user.id}`, "integration_test"));
   assert.equal((await prisma.user.findUniqueOrThrow({ where: { id: user.id } })).role, "CUSTOMER");
   assert.equal(await prisma.session.count({ where: { revokedAt: null } }), 1);
 });

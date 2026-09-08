@@ -6,8 +6,10 @@ import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { validateIntegrationEnvironment } from "./integration-environment";
 
-const catalogTables = [
+const trackedTables = [
   "age_ranges",
+  "customer_profiles",
+  "dependents",
   "package_faqs",
   "package_vaccines",
   "packages",
@@ -18,22 +20,22 @@ const catalogTables = [
   "sessions"
 ] as const;
 
-type CatalogSnapshot = Record<
-  (typeof catalogTables)[number],
+type DatabaseSnapshot = Record<
+  (typeof trackedTables)[number],
   { count: number; fingerprint: string }
 >;
 
-const snapshotCatalog = async (databaseUrl: string, schema: "public" | "integration_test") => {
+const snapshotDatabase = async (databaseUrl: string, schema: "public" | "integration_test") => {
   const client = new pg.Client({ connectionString: databaseUrl });
   await client.connect();
 
   try {
     const entries: Array<readonly [
-      (typeof catalogTables)[number],
+      (typeof trackedTables)[number],
       { count: number; fingerprint: string }
     ]> = [];
 
-    for (const table of catalogTables) {
+    for (const table of trackedTables) {
       const result = await client.query<{ row: unknown }>(
         `SELECT to_jsonb(record) AS row
            FROM "${schema}"."${table}" AS record
@@ -45,14 +47,14 @@ const snapshotCatalog = async (databaseUrl: string, schema: "public" | "integrat
       entries.push([table, { count: result.rowCount ?? 0, fingerprint }] as const);
     }
 
-    return Object.fromEntries(entries) as CatalogSnapshot;
+    return Object.fromEntries(entries) as DatabaseSnapshot;
   } finally {
     await client.end();
   }
 };
 
-const formatCounts = (snapshot: CatalogSnapshot) =>
-  catalogTables.map((table) => `${table}=${snapshot[table].count}`).join(", ");
+const formatCounts = (snapshot: DatabaseSnapshot) =>
+  trackedTables.map((table) => `${table}=${snapshot[table].count}`).join(", ");
 
 const environment = validateIntegrationEnvironment(
   process.env.DATABASE_URL,
@@ -66,6 +68,7 @@ const integrationTest = fileURLToPath(
   new URL("../src/modules/catalog/catalog.integration.test.ts", import.meta.url)
 );
 const authIntegrationTest = fileURLToPath(new URL("../src/modules/auth/auth.integration.test.ts", import.meta.url));
+const customerIntegrationTest = fileURLToPath(new URL("../src/modules/customer/customer.integration.test.ts", import.meta.url));
 const testEnv = {
   ...process.env,
   NODE_ENV: "test",
@@ -84,7 +87,7 @@ const run = (args: string[]) => {
 };
 
 const main = async () => {
-  const publicBefore = await snapshotCatalog(
+  const publicBefore = await snapshotDatabase(
     environment.developmentDatabaseUrl,
     environment.developmentSchema
   );
@@ -93,12 +96,12 @@ const main = async () => {
   let executionError: unknown;
   try {
     run([prismaCli, "migrate", "deploy"]);
-    run([tsxCli, "--test", "--test-concurrency=1", integrationTest, authIntegrationTest]);
+    run([tsxCli, "--test", "--test-concurrency=1", integrationTest, authIntegrationTest, customerIntegrationTest]);
   } catch (error) {
     executionError = error;
   }
 
-  const publicAfter = await snapshotCatalog(
+  const publicAfter = await snapshotDatabase(
     environment.developmentDatabaseUrl,
     environment.developmentSchema
   );
@@ -108,9 +111,9 @@ const main = async () => {
     "Integration tests modified data in the public schema"
   );
 
-  const testAfter = await snapshotCatalog(environment.testDatabaseUrl, environment.testSchema);
+  const testAfter = await snapshotDatabase(environment.testDatabaseUrl, environment.testSchema);
   assert.equal(
-    catalogTables.every((table) => testAfter[table].count === 0),
+    trackedTables.every((table) => testAfter[table].count === 0),
     true,
     "Integration test cleanup left catalog data in the integration_test schema"
   );

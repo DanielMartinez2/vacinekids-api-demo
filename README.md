@@ -17,10 +17,11 @@ Implementado nesta etapa:
 - migrations, seed fictício e testes de integração;
 - autenticação server-side (cadastro, login, logout e `/auth/me`);
 - autorização CUSTOMER/ADMIN e CLI local de promoção administrativa.
+- perfil do responsável criado sob demanda;
+- dependentes com ownership por sessão, paginação e exclusão lógica.
 
 Ainda não implementado:
 
-- clientes e dependentes;
 - documentos;
 - pedidos e itens de pedido;
 - pagamentos ou Mercado Pago;
@@ -28,6 +29,8 @@ Ainda não implementado:
 - estoque transacional.
 
 As escritas do catálogo e `includeDeleted=true` exigem sessão ADMIN. Leituras normais continuam públicas. Para o teste controlado com o frontend no GitHub Pages, a sessão de produção usa cookie cross-site HttpOnly; o modo local preserva a política same-site. Consulte [o contrato e o guia de segurança](docs/auth-phase-1a.md).
+
+`CUSTOMER` representa exclusivamente quem utiliza os serviços: pode criar o próprio perfil e gerenciar seus dependentes. `ADMIN` representa exclusivamente uma conta administrativa e recebe `403` nas rotas self-service. Uma pessoa que também queira utilizar os serviços deve manter uma conta CUSTOMER separada. O utilitário local de promoção recusa qualquer CUSTOMER que já possua `CustomerProfile` e preserva perfil, dependentes e sessões.
 
 ## Stack
 
@@ -48,6 +51,8 @@ Vaccine ──< VaccineFaq
    ├──< VaccineAgeRange >── AgeRange
    │
    └──< PackageVaccine >── Package ──< PackageFaq
+
+User ── CustomerProfile ──< Dependent
 ```
 
 - Preços usam `DECIMAL(12,2)` e são devolvidos como strings com duas casas decimais.
@@ -55,6 +60,10 @@ Vaccine ──< VaccineFaq
 - FAQs têm ordem explícita por `position`.
 - `PackageVaccine.quantity` representa quantas unidades da vacina compõem o pacote.
 - Estoque não faz parte do modelo atual.
+- `CustomerProfile` é opcional e criado somente no primeiro `PUT /profile` completo.
+- Telefones são persistidos em E.164 canônico.
+- `Dependent.birthDate` usa PostgreSQL `DATE` e contrato público `YYYY-MM-DD`.
+- `Dependent` usa soft delete; `CustomerProfile` não.
 
 ## Requisitos
 
@@ -242,7 +251,7 @@ npm test
 
 O runner de integração valida o isolamento antes de qualquer operação destrutiva e só então substitui `DATABASE_URL` pela `TEST_DATABASE_URL` no processo filho. O `PrismaPg` recebe também o schema extraído da URL, garantindo que as queries do Client sejam qualificadas para `integration_test`.
 
-As migrations são aplicadas nesse mesmo ambiente. Antes e depois da suíte, o runner compara contagens e fingerprints das tabelas de catálogo, `users` e `sessions` em `public`; ao final, também confirma que o cleanup deixou essas tabelas de `integration_test` vazias. Aplique primeiro a migration local de desenvolvimento com `npm run db:migrate:local`. As suítes de catálogo e auth são executadas sequencialmente e não utilizam Neon. Tokens/hashes/linhas dos snapshots nunca são impressos.
+As migrations são aplicadas nesse mesmo ambiente. Antes e depois da suíte, o runner compara contagens e fingerprints das tabelas de catálogo, `users`, `sessions`, `customer_profiles` e `dependents` em `public`; ao final, também confirma que o cleanup deixou essas tabelas de `integration_test` vazias. Aplique primeiro a migration local de desenvolvimento com `npm run db:migrate:local`. As suítes de catálogo, auth e customer são executadas sequencialmente e não utilizam Neon. Tokens, hashes e linhas dos snapshots nunca são impressos.
 
 Cobertura atual de integração:
 
@@ -254,6 +263,10 @@ Cobertura atual de integração:
 - listagem de faixas etárias ativas;
 - exclusão lógica de pacote;
 - resposta `422` para payload inválido.
+- profile ausente, criação/atualização idempotente, validação e `no-store`;
+- dependentes, paginação, soft delete e data civil;
+- isolamento CUSTOMER/ADMIN e testes explícitos contra BOLA/IDOR;
+- bloqueio de promoção administrativa quando já existe perfil de cliente.
 
 ## Contrato de resposta
 
@@ -335,6 +348,31 @@ Ao enviar `faqs` ou `vaccines` em um `PATCH`, a coleção enviada substitui inte
 | `DELETE` | `/api/v1/age-ranges/:id` | Exclusão lógica |
 
 As idades são representadas em meses. Um limite `null` significa faixa aberta.
+
+### Perfil do responsável
+
+Todas as rotas abaixo exigem uma sessão `CUSTOMER`. `ADMIN` recebe `403`.
+
+| Método | Rota | Comportamento |
+|---|---|---|
+| `GET` | `/api/v1/profile` | Retorna o perfil próprio ou `data: null` |
+| `PUT` | `/api/v1/profile` | Upsert completo com `name` e `phone` |
+
+O perfil é resolvido exclusivamente por `req.auth.id`; `userId` não faz parte do payload nem da resposta. Nomes são normalizados com NFC, trim e espaços internos condensados, com 2–160 caracteres Unicode. O telefone deve chegar já em E.164, por exemplo `+5511999990001`.
+
+### Dependentes
+
+| Método | Rota | Comportamento |
+|---|---|---|
+| `GET` | `/api/v1/dependents` | Lista próprios registros ativos com `page` e `pageSize` |
+| `POST` | `/api/v1/dependents` | Cria para o perfil autenticado; sem perfil retorna `409 PROFILE_REQUIRED` |
+| `GET` | `/api/v1/dependents/:id` | Retorna somente registro próprio e ativo |
+| `PATCH` | `/api/v1/dependents/:id` | Atualiza parcialmente `name` e/ou `birthDate` |
+| `DELETE` | `/api/v1/dependents/:id` | Exclusão lógica |
+
+`birthDate` aceita estritamente uma data civil real, não futura, no formato `YYYY-MM-DD`; timestamps são rejeitados. Não há idade máxima arbitrária. As queries de leitura, alteração e exclusão combinam o ID do dependente, `deletedAt = null` e `customerProfile.userId = req.auth.id`. Recurso inexistente, removido ou de outro CUSTOMER retorna o mesmo `404 DEPENDENT_NOT_FOUND`, impedindo enumeração/BOLA. `userId`, `customerProfileId` e campos internos nunca são aceitos em payload público.
+
+Profile e dependentes usam `Cache-Control: no-store`. Escritas `PUT`, `POST`, `PATCH` e `DELETE` preservam a proteção de Origin/CSRF já existente. Não existe consulta administrativa de clientes nesta fase.
 
 ## Verificação completa sugerida
 

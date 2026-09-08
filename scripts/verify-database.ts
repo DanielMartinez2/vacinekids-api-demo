@@ -2,7 +2,7 @@ import "dotenv/config";
 import assert from "node:assert/strict";
 import pg from "pg";
 
-const databaseUrl = process.env.DATABASE_URL_UNPOOLED ?? process.env.DATABASE_URL;
+const databaseUrl = process.env.DATABASE_URL_UNPOOLED || process.env.DATABASE_URL;
 
 if (!databaseUrl) {
   throw new Error("DATABASE_URL_UNPOOLED or DATABASE_URL is required to verify the database");
@@ -13,6 +13,8 @@ const client = new pg.Client({ connectionString: databaseUrl });
 
 const expectedTables = [
   "age_ranges",
+  "customer_profiles",
+  "dependents",
   "package_faqs",
   "package_vaccines",
   "packages",
@@ -22,6 +24,8 @@ const expectedTables = [
 ];
 
 const expectedForeignKeys = [
+  "customer_profiles_user_id_fkey",
+  "dependents_customer_profile_id_fkey",
   "package_faqs_package_id_fkey",
   "package_vaccines_package_id_fkey",
   "package_vaccines_vaccine_id_fkey",
@@ -35,6 +39,9 @@ const expectedCheckConstraints = [
   "age_ranges_max_age_check",
   "age_ranges_min_age_check",
   "age_ranges_sort_order_check",
+  "customer_profiles_name_format_check",
+  "customer_profiles_phone_e164_check",
+  "dependents_name_format_check",
   "package_faqs_position_check",
   "package_vaccines_quantity_check",
   "packages_price_check",
@@ -45,6 +52,8 @@ const expectedCheckConstraints = [
 const expectedIndexes = [
   "age_ranges_deleted_at_sort_order_idx",
   "age_ranges_slug_key",
+  "customer_profiles_user_id_key",
+  "dependents_customer_profile_id_deleted_at_idx",
   "package_faqs_package_id_position_key",
   "package_vaccines_pkey",
   "package_vaccines_vaccine_id_idx",
@@ -116,14 +125,57 @@ const main = async () => {
        FROM information_schema.columns
       WHERE table_schema = $1
         AND column_name = 'deleted_at'
-        AND table_name IN ('vaccines', 'packages', 'age_ranges')`,
+        AND table_name IN ('vaccines', 'packages', 'age_ranges', 'dependents')`,
     [configuredSchema]
   );
-  assert.equal(softDeleteColumns.rowCount, 3, "Expected deleted_at on vaccines, packages and age_ranges");
+  assert.equal(softDeleteColumns.rowCount, 4, "Expected deleted_at on catalog resources and dependents");
+
+  const customerColumns = await client.query<{
+    table_name: string;
+    column_name: string;
+    data_type: string;
+    character_maximum_length: number | null;
+    is_nullable: "YES" | "NO";
+  }>(
+    `SELECT table_name, column_name, data_type, character_maximum_length, is_nullable
+       FROM information_schema.columns
+      WHERE table_schema = $1
+        AND (table_name, column_name) IN (
+          ('customer_profiles', 'name'),
+          ('customer_profiles', 'phone'),
+          ('customer_profiles', 'deleted_at'),
+          ('dependents', 'name'),
+          ('dependents', 'birth_date'),
+          ('dependents', 'deleted_at')
+        )`,
+    [configuredSchema]
+  );
+  const column = (table: string, name: string) =>
+    customerColumns.rows.find((value) => value.table_name === table && value.column_name === name);
+  assert.deepEqual(
+    { type: column("customer_profiles", "name")?.data_type, length: column("customer_profiles", "name")?.character_maximum_length },
+    { type: "character varying", length: 160 },
+    "customer_profiles.name must be VARCHAR(160)"
+  );
+  assert.deepEqual(
+    { type: column("customer_profiles", "phone")?.data_type, length: column("customer_profiles", "phone")?.character_maximum_length },
+    { type: "character varying", length: 16 },
+    "customer_profiles.phone must be VARCHAR(16)"
+  );
+  assert.deepEqual(
+    { type: column("dependents", "name")?.data_type, length: column("dependents", "name")?.character_maximum_length },
+    { type: "character varying", length: 160 },
+    "dependents.name must be VARCHAR(160)"
+  );
+  assert.equal(column("dependents", "birth_date")?.data_type, "date", "dependents.birth_date must be DATE");
+  assert.equal(column("dependents", "birth_date")?.is_nullable, "NO", "dependents.birth_date must be required");
+  assert.equal(column("dependents", "deleted_at")?.data_type, "timestamp with time zone", "dependents.deleted_at must be TIMESTAMPTZ");
+  assert.equal(column("dependents", "deleted_at")?.is_nullable, "YES", "dependents.deleted_at must be nullable");
+  assert.equal(column("customer_profiles", "deleted_at"), undefined, "customer_profiles must not use soft delete");
 
   console.log(
     `Database verified: ${expectedTables.length} tables, ${expectedForeignKeys.length} foreign keys, ` +
-      `${expectedCheckConstraints.length} check constraints and catalog indexes are present.`
+      `${expectedCheckConstraints.length} check constraints and required indexes are present.`
   );
 };
 

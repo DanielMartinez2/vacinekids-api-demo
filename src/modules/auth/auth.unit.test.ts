@@ -161,6 +161,16 @@ test("preflight allows exact origin and credentials without authentication", asy
   assert.match(response.headers["access-control-allow-headers"], /X-VacineKids-CSRF/);
 });
 
+test("preflight allows PUT for the customer profile with the existing credential policy", async () => {
+  const response = await request(createApp(fakeService())).options("/api/v1/profile")
+    .set("Origin", "http://localhost:5173").set("Access-Control-Request-Method", "PUT")
+    .set("Access-Control-Request-Headers", "Content-Type,X-VacineKids-CSRF");
+  assert.equal(response.status, 204);
+  assert.equal(response.headers["access-control-allow-origin"], "http://localhost:5173");
+  assert.equal(response.headers["access-control-allow-credentials"], "true");
+  assert.match(response.headers["access-control-allow-methods"], /PUT/);
+});
+
 test("400/413/415/422 with no-store and no sensitive body reflection", async () => {
   const app = createApp(fakeService());
   for (const [body, contentType, status] of [["{broken", "application/json", 400],
