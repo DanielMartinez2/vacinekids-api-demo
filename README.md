@@ -97,33 +97,53 @@ Variáveis principais:
 ```dotenv
 NODE_ENV=development
 PORT=3001
-DATABASE_URL=postgresql://vacinekids:vacinekids_dev@localhost:5432/vacinekids_demo?schema=public
-TEST_DATABASE_URL=postgresql://vacinekids:vacinekids_dev@localhost:5432/vacinekids_demo?schema=integration_test
+DATABASE_URL=postgresql://<usuario-local>:<senha-local>@localhost:5432/vacinekids_demo?schema=public
+TEST_DATABASE_URL=postgresql://<usuario-local>:<senha-local>@localhost:5432/vacinekids_demo?schema=integration_test
 FRONTEND_URL=http://localhost:5173
 ```
 
 `DATABASE_URL` é usada pela aplicação e pelo seed de desenvolvimento e deve selecionar explicitamente `schema=public`.
 
-Em ambientes Neon, `DATABASE_URL` mantém a conexão pooled para o runtime da API. Quando `DATABASE_URL_UNPOOLED` estiver disponível, a Prisma CLI a utiliza para migrations e operações administrativas; no desenvolvimento local, a configuração recorre explicitamente a `DATABASE_URL` quando a conexão unpooled não existir.
+Em ambientes Neon, `DATABASE_URL` mantém a conexão pooled para o runtime da API. Quando `DATABASE_URL_UNPOOLED` estiver disponível, a Prisma CLI a utiliza para migrations e operações administrativas. Essas URLs remotas pertencem somente aos fluxos de runtime/administração apropriados e nunca ao perfil de integração local.
 
-`TEST_DATABASE_URL` é exclusiva dos testes de integração e deve selecionar explicitamente `schema=integration_test`. O runner valida ambas as URLs antes de qualquer conexão: somente loopback (`localhost`, `127.0.0.1`, `[::1]`), mesmo host/porta, banco `vacinekids_demo`, desenvolvimento em `public`, testes em `integration_test` e apenas o parâmetro `schema`. URLs remotas (incluindo Neon/Render), ambíguas ou iguais são rejeitadas. Os arquivos de integração também possuem bootstrap obrigatório antes de importar app/Prisma. Não use `npm test` com `DATABASE_URL` apontando ao Neon: configure as URLs locais explicitamente; o runner abortará nesse cenário.
+`TEST_DATABASE_URL` é exclusiva dos testes de integração e deve selecionar explicitamente `schema=integration_test`. O runner valida ambas as URLs antes de qualquer conexão: somente loopback (`localhost`, `127.0.0.1`, `[::1]`), mesmo host/porta, banco `vacinekids_demo`, desenvolvimento em `public`, testes em `integration_test` e apenas o parâmetro `schema`. URLs remotas (incluindo Neon/Render), ambíguas ou iguais são rejeitadas. Os arquivos de integração também possuem bootstrap obrigatório antes de importar app/Prisma. Não misture uma URL Neon de runtime com uma URL local de teste: use um perfil integralmente local, pois o runner abortará antes da conexão.
 
-Para o runtime PostgreSQL hospedado, configure a URL e o TLS indicados pelo provedor. Isso NÃO se aplica aos testes ou à CLI administrativa local da Fase 1A.
+### Perfil local exclusivo para integração
 
-## PostgreSQL local já instalado
+Mantenha um `.env.integration` local, ignorado pelo Git e nunca commitado. Derive as duas URLs da mesma credencial válida do PostgreSQL local, alterando somente o schema:
 
-Crie um banco e usuário exclusivos para a demonstração. Exemplo conceitual executado por um administrador PostgreSQL:
+```dotenv
+DATABASE_URL=postgresql://<usuario-local>:<senha-local>@localhost:5432/vacinekids_demo?schema=public
+TEST_DATABASE_URL=postgresql://<usuario-local>:<senha-local>@localhost:5432/vacinekids_demo?schema=integration_test
+DATABASE_URL_UNPOOLED=
+FRONTEND_URL=http://localhost:5173
+```
+
+No PowerShell, selecione esse arquivo explicitamente antes de executar a suíte:
+
+```powershell
+$env:DOTENV_CONFIG_PATH = ".env.integration"
+npm test
+```
+
+O `DATABASE_URL_UNPOOLED` vazio impede que a configuração local herde uma conexão administrativa remota. O perfil deve permanecer inteiramente em loopback, na porta `5432`, banco `vacinekids_demo`, com `public` para a referência de desenvolvimento e `integration_test` para a suíte.
+
+## Perfil B — PostgreSQL local já instalado
+
+Uma instalação PostgreSQL local existente pode usar outro usuário e outra senha; os valores precisam ser os que já são válidos nessa instalação. Mantenha, para esta suíte, loopback, porta `5432`, banco `vacinekids_demo` e os schemas `public`/`integration_test`.
+
+Se ainda for necessário criar um banco e usuário exclusivos para a demonstração, este é um exemplo conceitual executado por um administrador PostgreSQL:
 
 ```sql
 CREATE ROLE vacinekids WITH LOGIN PASSWORD 'vacinekids_dev';
 CREATE DATABASE vacinekids_demo OWNER vacinekids;
 ```
 
-Os valores acima são exclusivamente demonstrativos. Ajuste o `.env` se usar outro usuário, senha, host ou porta.
+Os valores acima são exclusivamente demonstrativos e coincidem com os padrões do Docker Compose deste repositório. Eles não são credenciais universais de uma instalação PostgreSQL já existente; ajuste o `.env` local sem versioná-lo.
 
-## PostgreSQL com Docker Compose
+## Perfil A — PostgreSQL com Docker Compose
 
-O arquivo `docker-compose.yml` inicia somente o PostgreSQL de desenvolvimento:
+Os valores concretos de usuário e senha presentes no `.env.example` são os padrões do `docker-compose.yml`. O arquivo inicia somente o PostgreSQL de desenvolvimento:
 
 ```bash
 docker compose up -d
