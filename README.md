@@ -105,13 +105,14 @@ Variáveis principais:
 NODE_ENV=development
 PORT=3001
 DATABASE_URL=postgresql://<usuario-local>:<senha-local>@localhost:5432/vacinekids_demo?schema=public
+DATABASE_URL_UNPOOLED=
 TEST_DATABASE_URL=postgresql://<usuario-local>:<senha-local>@localhost:5432/vacinekids_demo?schema=integration_test
 FRONTEND_URL=http://localhost:5173
 ```
 
 `DATABASE_URL` é usada pela aplicação e pelo seed de desenvolvimento e deve selecionar explicitamente `schema=public`.
 
-Em ambientes Neon, `DATABASE_URL` mantém a conexão pooled para o runtime da API. Quando `DATABASE_URL_UNPOOLED` estiver disponível, a Prisma CLI a utiliza para migrations e operações administrativas. Essas URLs remotas pertencem somente aos fluxos de runtime/administração apropriados e nunca ao perfil de integração local.
+Em ambientes Neon, `DATABASE_URL` mantém a conexão pooled para o runtime da API. Quando `DATABASE_URL_UNPOOLED` contiver uma URL não vazia, a Prisma CLI a prefere para migrations e operações administrativas. Um valor ausente, vazio ou composto somente por espaços faz fallback para `DATABASE_URL`; se ambas estiverem ausentes ou vazias, a configuração falha explicitamente sem imprimir seus valores. Para migrations no Neon production, permanece obrigatório preencher e validar operacionalmente `DATABASE_URL_UNPOOLED` antes da execução. Essas URLs remotas pertencem somente aos fluxos de runtime/administração apropriados e nunca ao perfil de integração local.
 
 `TEST_DATABASE_URL` é exclusiva dos testes de integração e deve selecionar explicitamente `schema=integration_test`. O runner valida ambas as URLs antes de qualquer conexão: somente loopback (`localhost`, `127.0.0.1`, `[::1]`), mesmo host/porta, banco `vacinekids_demo`, desenvolvimento em `public`, testes em `integration_test` e apenas o parâmetro `schema`. URLs remotas (incluindo Neon/Render), ambíguas ou iguais são rejeitadas. Os arquivos de integração também possuem bootstrap obrigatório antes de importar app/Prisma. Não misture uma URL Neon de runtime com uma URL local de teste: use um perfil integralmente local, pois o runner abortará antes da conexão.
 
@@ -133,7 +134,7 @@ $env:DOTENV_CONFIG_PATH = ".env.integration"
 npm test
 ```
 
-O `DATABASE_URL_UNPOOLED` vazio impede que a configuração local herde uma conexão administrativa remota. O perfil deve permanecer inteiramente em loopback, na porta `5432`, banco `vacinekids_demo`, com `public` para a referência de desenvolvimento e `integration_test` para a suíte.
+O `DATABASE_URL_UNPOOLED` vazio faz a Prisma CLI usar `DATABASE_URL` e impede que a configuração local herde uma conexão administrativa remota. O perfil deve permanecer inteiramente em loopback, na porta `5432`, banco `vacinekids_demo`, com `public` para a referência de desenvolvimento e `integration_test` para a suíte.
 
 ## Perfil B — PostgreSQL local já instalado
 

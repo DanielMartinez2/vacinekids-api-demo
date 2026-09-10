@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const tsxCli = fileURLToPath(new URL("../node_modules/tsx/dist/cli.mjs", import.meta.url));
 const unitTests = [
+  fileURLToPath(new URL("../src/config/prisma-database-url.test.ts", import.meta.url)),
   fileURLToPath(new URL("../src/modules/catalog/catalog.schemas.test.ts", import.meta.url)),
   fileURLToPath(new URL("./integration-environment.test.ts", import.meta.url)),
   fileURLToPath(new URL("../src/modules/auth/auth.unit.test.ts", import.meta.url)),
