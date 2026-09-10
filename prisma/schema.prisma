@@ -21,6 +21,27 @@ enum UserStatus {
   @@map("user_status")
 }
 
+enum OrderStatus {
+  PENDING_PAYMENT
+  CANCELLED
+
+  @@map("order_status")
+}
+
+enum OrderProductType {
+  VACCINE
+  PACKAGE
+
+  @@map("order_product_type")
+}
+
+enum OrderRecipientType {
+  CUSTOMER
+  DEPENDENT
+
+  @@map("order_recipient_type")
+}
+
 model User {
   id              String           @id @default(uuid()) @db.Uuid
   email           String           @unique @db.VarChar(254)
@@ -45,6 +66,7 @@ model CustomerProfile {
 
   user       User        @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   dependents Dependent[]
+  orders     Order[]
 
   @@map("customer_profiles")
 }
@@ -58,7 +80,8 @@ model Dependent {
   updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
   deletedAt         DateTime? @map("deleted_at") @db.Timestamptz(3)
 
-  customerProfile CustomerProfile @relation(fields: [customerProfileId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  customerProfile CustomerProfile      @relation(fields: [customerProfileId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  orderRecipients OrderItemRecipient[]
 
   @@index([customerProfileId, deletedAt])
   @@map("dependents")
@@ -89,9 +112,11 @@ model Vaccine {
   updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
   deletedAt    DateTime? @map("deleted_at") @db.Timestamptz(3)
 
-  faqs         VaccineFaq[]
-  ageRanges    VaccineAgeRange[]
-  packageLinks PackageVaccine[]
+  faqs            VaccineFaq[]
+  ageRanges       VaccineAgeRange[]
+  packageLinks    PackageVaccine[]
+  orderItems      OrderItem[]          @relation("OrderItemVaccine")
+  orderComponents OrderItemComponent[] @relation("OrderItemComponentVaccine")
 
   @@unique([name, manufacturer])
   @@index([deletedAt])
@@ -152,8 +177,9 @@ model Package {
   updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
   deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(3)
 
-  faqs     PackageFaq[]
-  vaccines PackageVaccine[]
+  faqs       PackageFaq[]
+  vaccines   PackageVaccine[]
+  orderItems OrderItem[]      @relation("OrderItemPackage")
 
   @@index([deletedAt])
   @@index([name])
@@ -186,4 +212,91 @@ model PackageVaccine {
   @@id([packageId, vaccineId])
   @@index([vaccineId])
   @@map("package_vaccines")
+}
+
+model Order {
+  id                         String      @id @default(uuid()) @db.Uuid
+  number                     String      @unique @db.VarChar(23)
+  customerProfileId          String      @map("customer_profile_id") @db.Uuid
+  status                     OrderStatus @default(PENDING_PAYMENT)
+  currency                   String      @default("BRL") @db.Char(3)
+  totalAmount                Decimal     @map("total_amount") @db.Decimal(14, 2)
+  customerNameSnapshot       String      @map("customer_name_snapshot") @db.VarChar(160)
+  customerEmailSnapshot      String      @map("customer_email_snapshot") @db.VarChar(254)
+  customerPhoneSnapshot      String      @map("customer_phone_snapshot") @db.VarChar(16)
+  idempotencyKey             String      @map("idempotency_key") @db.Uuid
+  requestHash                String      @map("request_hash") @db.Char(64)
+  checkoutFingerprint        String      @map("checkout_fingerprint") @db.Char(64)
+  checkoutFingerprintVersion Int         @default(1) @map("checkout_fingerprint_version") @db.SmallInt
+  cancelledAt                DateTime?   @map("cancelled_at") @db.Timestamptz(3)
+  createdAt                  DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt                  DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  customerProfile CustomerProfile @relation(fields: [customerProfileId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  items           OrderItem[]
+
+  @@unique([customerProfileId, idempotencyKey])
+  @@index([customerProfileId, createdAt(sort: Desc), id(sort: Desc)])
+  @@map("orders")
+}
+
+model OrderItem {
+  id                          String           @id @default(uuid()) @db.Uuid
+  orderId                     String           @map("order_id") @db.Uuid
+  position                    Int
+  productType                 OrderProductType @map("product_type")
+  vaccineId                   String?          @map("vaccine_id") @db.Uuid
+  packageId                   String?          @map("package_id") @db.Uuid
+  productNameSnapshot         String           @map("product_name_snapshot") @db.VarChar(160)
+  productManufacturerSnapshot String?          @map("product_manufacturer_snapshot") @db.VarChar(160)
+  unitPrice                   Decimal          @map("unit_price") @db.Decimal(12, 2)
+  quantity                    Int
+  lineTotal                   Decimal          @map("line_total") @db.Decimal(14, 2)
+  createdAt                   DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  order      Order                @relation(fields: [orderId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  vaccine    Vaccine?             @relation("OrderItemVaccine", fields: [vaccineId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  package    Package?             @relation("OrderItemPackage", fields: [packageId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  recipients OrderItemRecipient[]
+  components OrderItemComponent[]
+
+  @@unique([orderId, position])
+  @@index([vaccineId])
+  @@index([packageId])
+  @@map("order_items")
+}
+
+model OrderItemRecipient {
+  id                         String             @id @default(uuid()) @db.Uuid
+  orderItemId                String             @map("order_item_id") @db.Uuid
+  recipientType              OrderRecipientType @map("recipient_type")
+  dependentId                String?            @map("dependent_id") @db.Uuid
+  recipientNameSnapshot      String             @map("recipient_name_snapshot") @db.VarChar(160)
+  recipientBirthDateSnapshot DateTime?          @map("recipient_birth_date_snapshot") @db.Date
+  position                   Int
+
+  orderItem OrderItem  @relation(fields: [orderItemId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  dependent Dependent? @relation(fields: [dependentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([orderItemId, position])
+  @@index([dependentId])
+  @@map("order_item_recipients")
+}
+
+model OrderItemComponent {
+  id                          String @id @default(uuid()) @db.Uuid
+  orderItemId                 String @map("order_item_id") @db.Uuid
+  vaccineId                   String @map("vaccine_id") @db.Uuid
+  vaccineNameSnapshot         String @map("vaccine_name_snapshot") @db.VarChar(160)
+  vaccineManufacturerSnapshot String @map("vaccine_manufacturer_snapshot") @db.VarChar(160)
+  quantity                    Int
+  position                    Int
+
+  orderItem OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  vaccine   Vaccine   @relation("OrderItemComponentVaccine", fields: [vaccineId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([orderItemId, position])
+  @@unique([orderItemId, vaccineId])
+  @@index([vaccineId])
+  @@map("order_item_components")
 }

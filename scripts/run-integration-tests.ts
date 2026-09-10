@@ -17,7 +17,11 @@ const trackedTables = [
   "vaccine_faqs",
   "vaccines",
   "users",
-  "sessions"
+  "sessions",
+  "orders",
+  "order_items",
+  "order_item_recipients",
+  "order_item_components"
 ] as const;
 
 type DatabaseSnapshot = Record<
@@ -69,6 +73,7 @@ const integrationTest = fileURLToPath(
 );
 const authIntegrationTest = fileURLToPath(new URL("../src/modules/auth/auth.integration.test.ts", import.meta.url));
 const customerIntegrationTest = fileURLToPath(new URL("../src/modules/customer/customer.integration.test.ts", import.meta.url));
+const ordersIntegrationTest = fileURLToPath(new URL("../src/modules/orders/orders.integration.test.ts", import.meta.url));
 const testEnv = {
   ...process.env,
   NODE_ENV: "test",
@@ -96,7 +101,7 @@ const main = async () => {
   let executionError: unknown;
   try {
     run([prismaCli, "migrate", "deploy"]);
-    run([tsxCli, "--test", "--test-concurrency=1", integrationTest, authIntegrationTest, customerIntegrationTest]);
+    run([tsxCli, "--test", "--test-concurrency=1", integrationTest, authIntegrationTest, customerIntegrationTest, ordersIntegrationTest]);
   } catch (error) {
     executionError = error;
   }

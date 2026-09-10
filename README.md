@@ -18,12 +18,12 @@ Implementado nesta etapa:
 - autenticação server-side (cadastro, login, logout e `/auth/me`);
 - autorização CUSTOMER/ADMIN e CLI local de promoção administrativa.
 - perfil do responsável criado sob demanda;
-- dependentes com ownership por sessão, paginação e exclusão lógica.
+- dependentes com ownership por sessão, paginação e exclusão lógica;
+- checkout autoritativo e stateless, pedidos imutáveis, histórico e cancelamento.
 
 Ainda não implementado:
 
 - documentos;
-- pedidos e itens de pedido;
 - pagamentos ou Mercado Pago;
 - agendamentos e reservas;
 - estoque transacional.
@@ -53,6 +53,10 @@ Vaccine ──< VaccineFaq
    └──< PackageVaccine >── Package ──< PackageFaq
 
 User ── CustomerProfile ──< Dependent
+              │                  │
+              └──< Order ──< OrderItem ──< OrderItemRecipient
+                                  │
+                                  └──< OrderItemComponent
 ```
 
 - Preços usam `DECIMAL(12,2)` e são devolvidos como strings com duas casas decimais.
@@ -64,6 +68,9 @@ User ── CustomerProfile ──< Dependent
 - Telefones são persistidos em E.164 canônico.
 - `Dependent.birthDate` usa PostgreSQL `DATE` e contrato público `YYYY-MM-DD`.
 - `Dependent` usa soft delete; `CustomerProfile` não.
+- O carrinho continua no frontend/localStorage; o preview de checkout não persiste dados.
+- `Order` congela dados comerciais do cliente e dos produtos. Pacotes permanecem um único item e guardam sua composição histórica em `OrderItemComponent`.
+- Valores de pedidos são calculados exclusivamente com `Prisma.Decimal`; preço, quantidade, total e moeda nunca são aceitos do cliente.
 
 ## Requisitos
 
@@ -271,7 +278,7 @@ npm test
 
 O runner de integração valida o isolamento antes de qualquer operação destrutiva e só então substitui `DATABASE_URL` pela `TEST_DATABASE_URL` no processo filho. O `PrismaPg` recebe também o schema extraído da URL, garantindo que as queries do Client sejam qualificadas para `integration_test`.
 
-As migrations são aplicadas nesse mesmo ambiente. Antes e depois da suíte, o runner compara contagens e fingerprints das tabelas de catálogo, `users`, `sessions`, `customer_profiles` e `dependents` em `public`; ao final, também confirma que o cleanup deixou essas tabelas de `integration_test` vazias. Aplique primeiro a migration local de desenvolvimento com `npm run db:migrate:local`. As suítes de catálogo, auth e customer são executadas sequencialmente e não utilizam Neon. Tokens, hashes e linhas dos snapshots nunca são impressos.
+As migrations são aplicadas nesse mesmo ambiente. Antes e depois da suíte, o runner compara contagens e fingerprints das tabelas de catálogo, identidade, perfil e pedidos em `public`; ao final, também confirma que o cleanup deixou essas tabelas de `integration_test` vazias. Aplique primeiro a migration local de desenvolvimento com `npm run db:migrate:local`. As suítes de catálogo, auth, customer e orders são executadas sequencialmente e não utilizam Neon. Tokens, hashes e linhas dos snapshots nunca são impressos.
 
 Cobertura atual de integração:
 
@@ -287,6 +294,11 @@ Cobertura atual de integração:
 - dependentes, paginação, soft delete e data civil;
 - isolamento CUSTOMER/ADMIN e testes explícitos contra BOLA/IDOR;
 - bloqueio de promoção administrativa quando já existe perfil de cliente.
+- preview autoritativo de Vaccine/Package e recipients CUSTOMER/DEPENDENT;
+- snapshots, dinheiro Decimal, fingerprint e detecção de checkout alterado;
+- criação atômica, idempotência concorrente, replay pós-timeout e colisão de número;
+- histórico, detalhe, cancelamento idempotente e isolamento BOLA de pedidos;
+- CORS, CSRF, `no-store`, limite de 32 KB e rate limiting das rotas comerciais.
 
 ## Contrato de resposta
 
@@ -393,6 +405,30 @@ O perfil é resolvido exclusivamente por `req.auth.id`; `userId` não faz parte 
 `birthDate` aceita estritamente uma data civil real, não futura, no formato `YYYY-MM-DD`; timestamps são rejeitados. Não há idade máxima arbitrária. As queries de leitura, alteração e exclusão combinam o ID do dependente, `deletedAt = null` e `customerProfile.userId = req.auth.id`. Recurso inexistente, removido ou de outro CUSTOMER retorna o mesmo `404 DEPENDENT_NOT_FOUND`, impedindo enumeração/BOLA. `userId`, `customerProfileId` e campos internos nunca são aceitos em payload público.
 
 Profile e dependentes usam `Cache-Control: no-store`. Escritas `PUT`, `POST`, `PATCH` e `DELETE` preservam a proteção de Origin/CSRF já existente. Não existe consulta administrativa de clientes nesta fase.
+
+### Checkout e pedidos
+
+Todas estas rotas exigem sessão `CUSTOMER`; `ADMIN` recebe `403`. Preview e criação exigem um `CustomerProfile`. A listagem sem perfil retorna uma página vazia, enquanto detalhe e cancelamento retornam `404 ORDER_NOT_FOUND`.
+
+| Método | Rota | Comportamento |
+|---|---|---|
+| `POST` | `/api/v1/checkout/preview` | Resolve preços, recipients e composição atuais sem persistir |
+| `POST` | `/api/v1/orders` | Cria um pedido atômico a partir de um preview ainda válido |
+| `GET` | `/api/v1/orders` | Histórico próprio com `page` e `pageSize` |
+| `GET` | `/api/v1/orders/:id` | Detalhe próprio com snapshots, recipients e components |
+| `POST` | `/api/v1/orders/:id/cancel` | Cancela `PENDING_PAYMENT`; repetição é idempotente |
+
+O cliente envia apenas `productType`, `productId` e os recipients (`CUSTOMER` ou `DEPENDENT`). `quantity` é sempre `recipients.length`; um recipient repetido representa outra unidade comercial e é permitido. Há limites de 10 produtos distintos, 10 recipients por item e 30 unidades no pedido.
+
+O preview retorna BRL, preços e totais com duas casas, snapshots resolvidos, composição de Package — incluindo `PackageVaccine.quantity` e fabricante — e um `checkoutFingerprint` SHA-256 na versão 1. A criação relê tudo em uma transação `RepeatableRead`; se um preço, nome, fabricante, perfil, dependente ou composição tiver mudado, retorna `409 CHECKOUT_CHANGED`. Produto removido ou Package vazio/incompleto retorna `409 PRODUCT_UNAVAILABLE`; recipient inexistente, removido ou pertencente a outro cliente retorna `404 RECIPIENT_NOT_FOUND`.
+
+`POST /orders` exige `Idempotency-Key` com UUID. A primeira criação retorna `201`; um replay da mesma intenção retorna o mesmo pedido com `200`, sem consultar novamente o catálogo, mesmo após mudanças posteriores. A mesma chave com outra intenção retorna `409 IDEMPOTENCY_KEY_REUSED`. O `requestHash` representa somente a intenção canônica recebida e é distinto do fingerprint do estado comercial. Chave, hashes e IDs internos de relacionamento não são expostos.
+
+Pedidos nascem em `PENDING_PAYMENT` e podem passar apenas para `CANCELLED` nesta fase. Itens e snapshots não possuem rotas de edição. Não há Payment, agendamento ou estoque transacional implementado.
+
+As rotas comerciais usam `Cache-Control: no-store`, JSON limitado a 32 KB e a proteção Origin/`X-VacineKids-CSRF` nas escritas. O preflight permite `Content-Type`, `X-VacineKids-CSRF` e `Idempotency-Key`. O preview aceita 60 requisições por 15 minutos por usuário; create e cancel compartilham proteção de 10 por 15 minutos por usuário. O `MemoryStore` é proteção local para uma única instância e não substitui a garantia de idempotência do PostgreSQL.
+
+Erros específicos incluem `PROFILE_REQUIRED`, `PRODUCT_UNAVAILABLE`, `RECIPIENT_NOT_FOUND`, `CHECKOUT_CHANGED`, `IDEMPOTENCY_KEY_REQUIRED`, `IDEMPOTENCY_KEY_INVALID`, `IDEMPOTENCY_KEY_REUSED`, `ORDER_NOT_FOUND`, `ORDER_NOT_CANCELLABLE` e `RATE_LIMITED`, sempre no envelope padrão.
 
 ## Verificação completa sugerida
 
