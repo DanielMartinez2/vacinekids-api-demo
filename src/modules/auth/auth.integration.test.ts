@@ -19,6 +19,12 @@ let fixtureHash: string;
 let app: ReturnType<typeof createApp>;
 
 const clear = async () => {
+  await prisma.paymentAttempt.deleteMany();
+  await prisma.payment.deleteMany();
+  await prisma.orderItemComponent.deleteMany();
+  await prisma.orderItemRecipient.deleteMany();
+  await prisma.orderItem.deleteMany();
+  await prisma.order.deleteMany();
   await prisma.dependent.deleteMany();
   await prisma.customerProfile.deleteMany();
   await prisma.session.deleteMany();

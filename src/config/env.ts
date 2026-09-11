@@ -6,6 +6,9 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3001),
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
   TEST_DATABASE_URL: z.string().min(1).optional(),
+  PAYMENT_PROVIDER: z.enum(["DEMO", "MERCADO_PAGO"]).default("DEMO"),
+  PAYMENT_DEMO_ENABLED: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
+  PAYMENT_DISPATCH_LEASE_SECONDS: z.coerce.number().int().min(1).max(300).default(30),
   FRONTEND_URL: z.string().url("FRONTEND_URL must be a valid URL")
     .refine(value => { const url = new URL(value); return ["http:", "https:"].includes(url.protocol) && url.origin === value; },
       "FRONTEND_URL must be an exact HTTP(S) origin without path, query or credentials")

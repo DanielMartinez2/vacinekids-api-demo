@@ -19,12 +19,13 @@ Implementado nesta etapa:
 - autorização CUSTOMER/ADMIN e CLI local de promoção administrativa.
 - perfil do responsável criado sob demanda;
 - dependentes com ownership por sessão, paginação e exclusão lógica;
-- checkout autoritativo e stateless, pedidos imutáveis, histórico e cancelamento.
+- checkout autoritativo e stateless, pedidos imutáveis, histórico e cancelamento;
+- Payment local criado sob demanda, tentativas idempotentes e provider DEMO sem cobrança real.
 
 Ainda não implementado:
 
 - documentos;
-- pagamentos ou Mercado Pago;
+- Mercado Pago, PIX, cartão, webhook, refund ou chargeback;
 - agendamentos e reservas;
 - estoque transacional.
 
@@ -54,9 +55,11 @@ Vaccine ──< VaccineFaq
 
 User ── CustomerProfile ──< Dependent
               │                  │
-              └──< Order ──< OrderItem ──< OrderItemRecipient
-                                  │
-                                  └──< OrderItemComponent
+              └──< Order ── Payment ──< PaymentAttempt
+                    │
+                    └──< OrderItem ──< OrderItemRecipient
+                              │
+                              └──< OrderItemComponent
 ```
 
 - Preços usam `DECIMAL(12,2)` e são devolvidos como strings com duas casas decimais.
@@ -71,6 +74,8 @@ User ── CustomerProfile ──< Dependent
 - O carrinho continua no frontend/localStorage; o preview de checkout não persiste dados.
 - `Order` congela dados comerciais do cliente e dos produtos. Pacotes permanecem um único item e guardam sua composição histórica em `OrderItemComponent`.
 - Valores de pedidos são calculados exclusivamente com `Prisma.Decimal`; preço, quantidade, total e moeda nunca são aceitos do cliente.
+- `Payment` é criado somente na primeira tentativa, copia amount/currency do Order e possui no máximo uma `PaymentAttempt` ativa (`CREATED`/`PROCESSING`).
+- O provider DEMO é determinístico, não usa rede e não realiza cobrança. Sua ativação é explícita e permanece desabilitada por padrão.
 
 ## Requisitos
 
@@ -108,6 +113,9 @@ DATABASE_URL=postgresql://<usuario-local>:<senha-local>@localhost:5432/vacinekid
 DATABASE_URL_UNPOOLED=
 TEST_DATABASE_URL=postgresql://<usuario-local>:<senha-local>@localhost:5432/vacinekids_demo?schema=integration_test
 FRONTEND_URL=http://localhost:5173
+PAYMENT_PROVIDER=DEMO
+PAYMENT_DEMO_ENABLED=false
+PAYMENT_DISPATCH_LEASE_SECONDS=30
 ```
 
 `DATABASE_URL` é usada pela aplicação e pelo seed de desenvolvimento e deve selecionar explicitamente `schema=public`.
@@ -115,6 +123,8 @@ FRONTEND_URL=http://localhost:5173
 Em ambientes Neon, `DATABASE_URL` mantém a conexão pooled para o runtime da API. Quando `DATABASE_URL_UNPOOLED` contiver uma URL não vazia, a Prisma CLI a prefere para migrations e operações administrativas. Um valor ausente, vazio ou composto somente por espaços faz fallback para `DATABASE_URL`; se ambas estiverem ausentes ou vazias, a configuração falha explicitamente sem imprimir seus valores. Para migrations no Neon production, permanece obrigatório preencher e validar operacionalmente `DATABASE_URL_UNPOOLED` antes da execução. Essas URLs remotas pertencem somente aos fluxos de runtime/administração apropriados e nunca ao perfil de integração local.
 
 `TEST_DATABASE_URL` é exclusiva dos testes de integração e deve selecionar explicitamente `schema=integration_test`. O runner valida ambas as URLs antes de qualquer conexão: somente loopback (`localhost`, `127.0.0.1`, `[::1]`), mesmo host/porta, banco `vacinekids_demo`, desenvolvimento em `public`, testes em `integration_test` e apenas o parâmetro `schema`. URLs remotas (incluindo Neon/Render), ambíguas ou iguais são rejeitadas. Os arquivos de integração também possuem bootstrap obrigatório antes de importar app/Prisma. Não misture uma URL Neon de runtime com uma URL local de teste: use um perfil integralmente local, pois o runner abortará antes da conexão.
+
+`PAYMENT_DEMO_ENABLED=false` é o default seguro: a API continua iniciando, mas uma nova tentativa retorna `503 PAYMENT_PROVIDER_UNAVAILABLE`. Para a demonstração exclusivamente local, defina `PAYMENT_PROVIDER=DEMO` e `PAYMENT_DEMO_ENABLED=true`. A lease de dispatch evita dois workers simultâneos; a chamada ao provider sempre ocorre fora da transação PostgreSQL.
 
 ### Perfil local exclusivo para integração
 
@@ -279,7 +289,7 @@ npm test
 
 O runner de integração valida o isolamento antes de qualquer operação destrutiva e só então substitui `DATABASE_URL` pela `TEST_DATABASE_URL` no processo filho. O `PrismaPg` recebe também o schema extraído da URL, garantindo que as queries do Client sejam qualificadas para `integration_test`.
 
-As migrations são aplicadas nesse mesmo ambiente. Antes e depois da suíte, o runner compara contagens e fingerprints das tabelas de catálogo, identidade, perfil e pedidos em `public`; ao final, também confirma que o cleanup deixou essas tabelas de `integration_test` vazias. Aplique primeiro a migration local de desenvolvimento com `npm run db:migrate:local`. As suítes de catálogo, auth, customer e orders são executadas sequencialmente e não utilizam Neon. Tokens, hashes e linhas dos snapshots nunca são impressos.
+As migrations são aplicadas nesse mesmo ambiente. Antes e depois da suíte, o runner compara contagens e fingerprints das tabelas de catálogo, identidade, perfil, pedidos e payments em `public`; ao final, também confirma que o cleanup deixou essas tabelas de `integration_test` vazias. Aplique primeiro a migration local de desenvolvimento com `npm run db:migrate:local`. As suítes de catálogo, auth, customer, orders e payments são executadas sequencialmente e não utilizam Neon. Tokens, hashes e linhas dos snapshots nunca são impressos.
 
 Cobertura atual de integração:
 
@@ -300,6 +310,9 @@ Cobertura atual de integração:
 - criação atômica, idempotência concorrente, replay pós-timeout e colisão de número;
 - histórico, detalhe, cancelamento idempotente e isolamento BOLA de pedidos;
 - CORS, CSRF, `no-store`, limite de 32 KB e rate limiting das rotas comerciais.
+- Payment lazy, provider DEMO, leases, máquinas de estado e idempotência independente;
+- concorrência de mesma/diferente key, janelas de crash e cancelamento coordenado;
+- constraints físicas de tentativa ativa e identificador do provider.
 
 ## Contrato de resposta
 
@@ -425,11 +438,26 @@ O preview retorna BRL, preços e totais com duas casas, snapshots resolvidos, co
 
 `POST /orders` exige `Idempotency-Key` com UUID. A primeira criação retorna `201`; um replay da mesma intenção retorna o mesmo pedido com `200`, sem consultar novamente o catálogo, mesmo após mudanças posteriores. A mesma chave com outra intenção retorna `409 IDEMPOTENCY_KEY_REUSED`. O `requestHash` representa somente a intenção canônica recebida e é distinto do fingerprint do estado comercial. Chave, hashes e IDs internos de relacionamento não são expostos.
 
-Pedidos nascem em `PENDING_PAYMENT` e podem passar apenas para `CANCELLED` nesta fase. Itens e snapshots não possuem rotas de edição. Não há Payment, agendamento ou estoque transacional implementado.
+Pedidos nascem em `PENDING_PAYMENT` e podem passar para `PAID` ou `CANCELLED`. Itens e snapshots não possuem rotas de edição. Não há agendamento ou estoque transacional implementado.
 
 As rotas comerciais usam `Cache-Control: no-store`, JSON limitado a 32 KB e a proteção Origin/`X-VacineKids-CSRF` nas escritas. O preflight permite `Content-Type`, `X-VacineKids-CSRF` e `Idempotency-Key`. O preview aceita 60 requisições por 15 minutos por usuário; create e cancel compartilham proteção de 10 por 15 minutos por usuário. O `MemoryStore` é proteção local para uma única instância e não substitui a garantia de idempotência do PostgreSQL.
 
 Erros específicos incluem `PROFILE_REQUIRED`, `PRODUCT_UNAVAILABLE`, `RECIPIENT_NOT_FOUND`, `CHECKOUT_CHANGED`, `IDEMPOTENCY_KEY_REQUIRED`, `IDEMPOTENCY_KEY_INVALID`, `IDEMPOTENCY_KEY_REUSED`, `ORDER_NOT_FOUND`, `ORDER_NOT_CANCELLABLE` e `RATE_LIMITED`, sempre no envelope padrão.
+
+### Payments locais
+
+As duas rotas exigem sessão `CUSTOMER`, ownership do Order e respostas `Cache-Control: no-store`. O provider DEMO nunca recebe resultado controlado pelo cliente e nunca efetua cobrança real.
+
+| Método | Rota | Descrição |
+|---|---|---|
+| `GET` | `/api/v1/orders/:orderId/payment` | Retorna o Payment próprio com a latestAttempt, ou `data: null` |
+| `POST` | `/api/v1/orders/:orderId/payment-attempts` | Recebe body `{}` e cria/retoma uma tentativa com `Idempotency-Key` própria |
+
+Payment é criado lazily. Amount e currency vêm exclusivamente do Order, o fluxo nominal DEMO muda `Payment` e `Order` para `PAID`, e o índice parcial do PostgreSQL garante no máximo uma attempt ativa. A chave do cliente é diferente da chave determinística do provider. Retries de transporte reutilizam a mesma Attempt, inclusive após lease expirada; a aprovação atualiza Attempt, Payment e Order atomicamente.
+
+O POST aceita exclusivamente JSON `{}`, limitado a 16 KB, e possui rate limit de 10 operações por 15 minutos por CUSTOMER. O GET possui limite independente de 60 por 15 minutos. Origin/CSRF continuam obrigatórios na escrita.
+
+O cancelamento permanece igual para Order sem Payment. Com Payment `PENDING` e apenas attempts terminais não aprovadas, ambos são cancelados na mesma transação; `PROCESSING` e `PAID` bloqueiam o cancelamento. Nenhum dado bruto de cartão existe no modelo, e Mercado Pago, PIX, CARD, webhook e reconciliação externa ainda não estão implementados.
 
 ## Verificação completa sugerida
 

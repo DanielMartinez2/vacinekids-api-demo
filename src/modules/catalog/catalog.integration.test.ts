@@ -21,6 +21,12 @@ const adultAgeRangeSlug = "adulto-teste";
 const unmatchedAgeRangeSlug = "sem-pacotes-teste";
 
 const clearCatalog = async () => {
+  await prisma.paymentAttempt.deleteMany();
+  await prisma.payment.deleteMany();
+  await prisma.orderItemComponent.deleteMany();
+  await prisma.orderItemRecipient.deleteMany();
+  await prisma.orderItem.deleteMany();
+  await prisma.order.deleteMany();
   await prisma.dependent.deleteMany();
   await prisma.customerProfile.deleteMany();
   await prisma.packageVaccine.deleteMany();

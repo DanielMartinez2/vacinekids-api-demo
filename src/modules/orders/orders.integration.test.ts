@@ -17,6 +17,8 @@ let passwordHash: string;
 let app: ReturnType<typeof createApp>;
 
 const clear = async () => {
+  await prisma.paymentAttempt.deleteMany();
+  await prisma.payment.deleteMany();
   await prisma.orderItemComponent.deleteMany();
   await prisma.orderItemRecipient.deleteMany();
   await prisma.orderItem.deleteMany();

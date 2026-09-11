@@ -22,6 +22,8 @@ const expectedTables = [
   "order_item_recipients",
   "order_items",
   "orders",
+  "payment_attempts",
+  "payments",
   "vaccine_age_ranges",
   "vaccine_faqs",
   "vaccines"
@@ -41,6 +43,8 @@ const expectedForeignKeys = [
   "order_item_recipients_dependent_id_fkey",
   "order_item_components_order_item_id_fkey",
   "order_item_components_vaccine_id_fkey",
+  "payments_order_id_fkey",
+  "payment_attempts_payment_id_fkey",
   "vaccine_age_ranges_age_range_id_fkey",
   "vaccine_age_ranges_vaccine_id_fkey",
   "vaccine_faqs_vaccine_id_fkey"
@@ -74,6 +78,17 @@ const expectedCheckConstraints = [
   "order_item_recipients_type_check",
   "order_item_components_quantity_check",
   "order_item_components_position_check",
+  "payments_amount_check",
+  "payments_currency_check",
+  "payments_status_timestamps_check",
+  "payment_attempts_sequence_check",
+  "payment_attempts_request_hash_format_check",
+  "payment_attempts_provider_idempotency_key_check",
+  "payment_attempts_provider_payment_id_check",
+  "payment_attempts_provider_status_check",
+  "payment_attempts_provider_status_detail_check",
+  "payment_attempts_completed_at_check",
+  "payment_attempts_terminal_lease_check",
   "vaccine_faqs_position_check",
   "vaccines_price_check"
 ];
@@ -100,6 +115,12 @@ const expectedIndexes = [
   "order_item_components_order_item_id_position_key",
   "order_item_components_order_item_id_vaccine_id_key",
   "order_item_components_vaccine_id_idx",
+  "payments_order_id_key",
+  "payment_attempts_payment_id_sequence_key",
+  "payment_attempts_payment_id_idempotency_key_key",
+  "payment_attempts_provider_provider_idempotency_key_key",
+  "payment_attempts_one_active_per_payment_idx",
+  "payment_attempts_provider_provider_payment_id_key",
   "vaccine_age_ranges_age_range_id_idx",
   "vaccine_age_ranges_pkey",
   "vaccine_faqs_vaccine_id_position_key",
@@ -150,14 +171,21 @@ const main = async () => {
        JOIN pg_enum e ON e.enumtypid = t.oid
        JOIN pg_namespace n ON n.oid = t.typnamespace
       WHERE n.nspname = $1
-        AND t.typname IN ('order_status', 'order_product_type', 'order_recipient_type')
+        AND t.typname IN (
+          'order_status', 'order_product_type', 'order_recipient_type',
+          'payment_status', 'payment_attempt_status', 'payment_provider', 'payment_method'
+        )
       GROUP BY t.typname`,
     [configuredSchema]
   );
   const enumLabels = (name: string) => enums.rows.find(({ enum_name }) => enum_name === name)?.labels;
-  assert.deepEqual(enumLabels("order_status"), ["PENDING_PAYMENT", "CANCELLED"]);
+  assert.deepEqual(enumLabels("order_status"), ["PENDING_PAYMENT", "PAID", "CANCELLED"]);
   assert.deepEqual(enumLabels("order_product_type"), ["VACCINE", "PACKAGE"]);
   assert.deepEqual(enumLabels("order_recipient_type"), ["CUSTOMER", "DEPENDENT"]);
+  assert.deepEqual(enumLabels("payment_status"), ["PENDING", "PROCESSING", "PAID", "CANCELLED"]);
+  assert.deepEqual(enumLabels("payment_attempt_status"), ["CREATED", "PROCESSING", "APPROVED", "REJECTED", "ERROR", "CANCELLED", "EXPIRED"]);
+  assert.deepEqual(enumLabels("payment_provider"), ["DEMO", "MERCADO_PAGO"]);
+  assert.deepEqual(enumLabels("payment_method"), ["DEMO", "PIX", "CARD"]);
 
   const decimalColumns = await client.query<{
     table_name: string;
@@ -170,13 +198,14 @@ const main = async () => {
       WHERE table_schema = $1
         AND (table_name, column_name) IN (
           ('vaccines', 'price'), ('packages', 'price'),
-          ('orders', 'total_amount'), ('order_items', 'unit_price'), ('order_items', 'line_total')
+          ('orders', 'total_amount'), ('order_items', 'unit_price'), ('order_items', 'line_total'),
+          ('payments', 'amount')
         )`,
     [configuredSchema]
   );
-  assert.equal(decimalColumns.rowCount, 5, "Expected all catalog and order DECIMAL columns");
+  assert.equal(decimalColumns.rowCount, 6, "Expected all catalog, order and payment DECIMAL columns");
   for (const column of decimalColumns.rows) {
-    const amount = column.column_name === "total_amount" || column.column_name === "line_total";
+    const amount = column.column_name === "total_amount" || column.column_name === "line_total" || column.table_name === "payments";
     assert.equal(column.numeric_precision, amount ? 14 : 12, `${column.table_name} has unexpected numeric precision`);
     assert.equal(column.numeric_scale, 2, `${column.table_name}.price must have scale 2`);
   }
@@ -263,6 +292,57 @@ const main = async () => {
     assert.equal(foreignKey.update_action, "c", `${foreignKey.conname} must use ON UPDATE CASCADE`);
   }
   assert.equal(fkActions.rowCount, 8, "Expected all eight order foreign keys with validated actions");
+
+  const paymentFkActions = await client.query<{ conname: string; delete_action: string; update_action: string }>(
+    `SELECT c.conname, c.confdeltype AS delete_action, c.confupdtype AS update_action
+       FROM pg_constraint c
+       JOIN pg_namespace n ON n.oid = c.connamespace
+      WHERE n.nspname = $1
+        AND c.contype = 'f'
+        AND c.conname = ANY($2::text[])`,
+    [configuredSchema, ["payments_order_id_fkey", "payment_attempts_payment_id_fkey"]]
+  );
+  assert.equal(paymentFkActions.rowCount, 2, "Expected both payment foreign keys");
+  for (const foreignKey of paymentFkActions.rows) {
+    assert.equal(foreignKey.delete_action, "r", `${foreignKey.conname} must use ON DELETE RESTRICT`);
+    assert.equal(foreignKey.update_action, "c", `${foreignKey.conname} must use ON UPDATE CASCADE`);
+  }
+
+  const paymentColumns = await client.query<{
+    table_name: string;
+    column_name: string;
+    data_type: string;
+    udt_name: string;
+    character_maximum_length: number | null;
+    is_nullable: "YES" | "NO";
+  }>(
+    `SELECT table_name, column_name, data_type, udt_name, character_maximum_length, is_nullable
+       FROM information_schema.columns
+      WHERE table_schema = $1
+        AND table_name IN ('payments', 'payment_attempts')`,
+    [configuredSchema]
+  );
+  assert.equal(paymentColumns.rowCount, 27, "Expected the exact column count across payment tables");
+  const paymentColumn = (table: string, name: string) =>
+    paymentColumns.rows.find((value) => value.table_name === table && value.column_name === name);
+  for (const [table, name] of [
+    ["payments", "id"], ["payments", "order_id"],
+    ["payment_attempts", "id"], ["payment_attempts", "payment_id"], ["payment_attempts", "idempotency_key"]
+  ]) assert.equal(paymentColumn(table, name)?.data_type, "uuid", `${table}.${name} must be UUID`);
+  assert.equal(paymentColumn("payments", "status")?.udt_name, "payment_status");
+  assert.equal(paymentColumn("payment_attempts", "status")?.udt_name, "payment_attempt_status");
+  assert.equal(paymentColumn("payment_attempts", "provider")?.udt_name, "payment_provider");
+  assert.equal(paymentColumn("payment_attempts", "method")?.udt_name, "payment_method");
+  assert.equal(paymentColumn("payments", "currency")?.character_maximum_length, 3);
+  assert.equal(paymentColumn("payment_attempts", "request_hash")?.character_maximum_length, 64);
+  for (const [name, length] of [
+    ["provider_idempotency_key", 128], ["provider_payment_id", 128],
+    ["provider_status", 64], ["provider_status_detail", 128]
+  ] as const) assert.equal(paymentColumn("payment_attempts", name)?.character_maximum_length, length);
+  for (const name of ["provider_payment_id", "provider_status", "provider_status_detail", "provider_requested_at", "dispatch_lease_until", "expires_at", "completed_at"])
+    assert.equal(paymentColumn("payment_attempts", name)?.is_nullable, "YES", `payment_attempts.${name} must be nullable`);
+  for (const name of ["paid_at", "cancelled_at"])
+    assert.equal(paymentColumn("payments", name)?.is_nullable, "YES", `payments.${name} must be nullable`);
 
   const softDeleteColumns = await client.query<{ table_name: string }>(
     `SELECT table_name

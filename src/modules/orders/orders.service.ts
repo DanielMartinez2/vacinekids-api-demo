@@ -253,10 +253,14 @@ const conflictKind = (target: string) => {
 
 const defaultOrderNumber = () => `VK-${randomBytes(10).toString("hex").toUpperCase()}`;
 
+const sqlTable = (schema: string, table: string) =>
+  Prisma.raw(`"${schema.replaceAll('"', '""')}"."${table.replaceAll('"', '""')}"`);
+
 export const createOrderService = (
   db: PrismaClient,
   clock = () => new Date(),
-  orderNumber = defaultOrderNumber
+  orderNumber = defaultOrderNumber,
+  schema = "public"
 ) => {
   const findExisting = (customerProfileId: string, idempotencyKey: string) => db.order.findUnique({
     where: { customerProfileId_idempotencyKey: { customerProfileId, idempotencyKey } },
@@ -418,15 +422,66 @@ export const createOrderService = (
     },
 
     async cancel(userId: string, id: string) {
-      const cancelledAt = clock();
-      const result = await db.order.updateMany({
-        where: { id, status: "PENDING_PAYMENT", customerProfile: { userId } },
-        data: { status: "CANCELLED", cancelledAt }
-      });
-      const order = await findOwned(userId, id);
-      if (result.count === 0 && order.status !== "CANCELLED") {
-        throw new HttpError(409, "ORDER_NOT_CANCELLABLE", "O pedido não pode ser cancelado neste estado.");
-      }
+      const order = await db.$transaction(async (tx) => {
+        const orders = sqlTable(schema, "orders");
+        const profiles = sqlTable(schema, "customer_profiles");
+        const owned = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+          SELECT o."id"
+            FROM ${orders} AS o
+            JOIN ${profiles} AS cp ON cp."id" = o."customer_profile_id"
+           WHERE o."id" = ${id}::uuid
+             AND cp."user_id" = ${userId}::uuid
+           FOR UPDATE OF o
+        `);
+        if (owned.length === 0) throw orderNotFound();
+
+        const current = await tx.order.findUniqueOrThrow({
+          where: { id },
+          select: { status: true, payment: { select: { id: true, status: true } } }
+        });
+        if (current.payment) {
+          const payments = sqlTable(schema, "payments");
+          await tx.$queryRaw(Prisma.sql`
+            SELECT "id" FROM ${payments} WHERE "id" = ${current.payment.id}::uuid FOR UPDATE
+          `);
+        }
+
+        if (current.status === "CANCELLED") {
+          if (current.payment && current.payment.status !== "CANCELLED") {
+            throw new HttpError(409, "PAYMENT_STATE_CONFLICT", "O estado do pagamento é inconsistente com o pedido.");
+          }
+          return tx.order.findUniqueOrThrow({ where: { id }, include: orderDetailsInclude });
+        }
+        if (current.status !== "PENDING_PAYMENT") {
+          throw new HttpError(409, "ORDER_NOT_CANCELLABLE", "O pedido não pode ser cancelado neste estado.");
+        }
+
+        if (current.payment) {
+          const blockingAttempt = await tx.paymentAttempt.findFirst({
+            where: {
+              paymentId: current.payment.id,
+              status: { in: ["CREATED", "PROCESSING", "APPROVED"] }
+            },
+            select: { id: true }
+          });
+          if (current.payment.status !== "PENDING" || blockingAttempt) {
+            throw new HttpError(409, "ORDER_NOT_CANCELLABLE", "O pedido não pode ser cancelado neste estado.");
+          }
+        }
+
+        const cancelledAt = clock();
+        if (current.payment) {
+          await tx.payment.update({
+            where: { id: current.payment.id },
+            data: { status: "CANCELLED", cancelledAt }
+          });
+        }
+        return tx.order.update({
+          where: { id },
+          data: { status: "CANCELLED", cancelledAt },
+          include: orderDetailsInclude
+        });
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
       return serializeOrder(order);
     }
   };

@@ -10,7 +10,11 @@ const unitTests = [
   fileURLToPath(new URL("../src/modules/auth/auth.unit.test.ts", import.meta.url)),
   fileURLToPath(new URL("../src/modules/customer/customer.schemas.test.ts", import.meta.url)),
   fileURLToPath(new URL("../src/modules/orders/orders.schemas.test.ts", import.meta.url)),
-  fileURLToPath(new URL("../src/modules/orders/orders.canonical.test.ts", import.meta.url))
+  fileURLToPath(new URL("../src/modules/orders/orders.canonical.test.ts", import.meta.url)),
+  fileURLToPath(new URL("../src/modules/payments/payments.schemas.test.ts", import.meta.url)),
+  fileURLToPath(new URL("../src/modules/payments/payments.canonical.test.ts", import.meta.url)),
+  fileURLToPath(new URL("../src/modules/payments/payments.state.test.ts", import.meta.url)),
+  fileURLToPath(new URL("../src/modules/payments/providers/demo-payment-provider.test.ts", import.meta.url))
 ];
 const integrationRunner = fileURLToPath(new URL("./run-integration-tests.ts", import.meta.url));
 

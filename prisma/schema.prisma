@@ -23,9 +23,46 @@ enum UserStatus {
 
 enum OrderStatus {
   PENDING_PAYMENT
+  PAID
   CANCELLED
 
   @@map("order_status")
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  PAID
+  CANCELLED
+
+  @@map("payment_status")
+}
+
+enum PaymentAttemptStatus {
+  CREATED
+  PROCESSING
+  APPROVED
+  REJECTED
+  ERROR
+  CANCELLED
+  EXPIRED
+
+  @@map("payment_attempt_status")
+}
+
+enum PaymentProvider {
+  DEMO
+  MERCADO_PAGO
+
+  @@map("payment_provider")
+}
+
+enum PaymentMethod {
+  DEMO
+  PIX
+  CARD
+
+  @@map("payment_method")
 }
 
 enum OrderProductType {
@@ -234,10 +271,56 @@ model Order {
 
   customerProfile CustomerProfile @relation(fields: [customerProfileId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   items           OrderItem[]
+  payment         Payment?
 
   @@unique([customerProfileId, idempotencyKey])
   @@index([customerProfileId, createdAt(sort: Desc), id(sort: Desc)])
   @@map("orders")
+}
+
+model Payment {
+  id          String        @id @default(uuid()) @db.Uuid
+  orderId     String        @unique @map("order_id") @db.Uuid
+  status      PaymentStatus @default(PENDING)
+  amount      Decimal       @db.Decimal(14, 2)
+  currency    String        @default("BRL") @db.Char(3)
+  paidAt      DateTime?     @map("paid_at") @db.Timestamptz(3)
+  cancelledAt DateTime?     @map("cancelled_at") @db.Timestamptz(3)
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  order    Order            @relation(fields: [orderId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  attempts PaymentAttempt[]
+
+  @@map("payments")
+}
+
+model PaymentAttempt {
+  id                     String               @id @default(uuid()) @db.Uuid
+  paymentId              String               @map("payment_id") @db.Uuid
+  sequence               Int
+  status                 PaymentAttemptStatus @default(CREATED)
+  provider               PaymentProvider
+  method                 PaymentMethod
+  idempotencyKey         String               @map("idempotency_key") @db.Uuid
+  requestHash            String               @map("request_hash") @db.Char(64)
+  providerIdempotencyKey String               @map("provider_idempotency_key") @db.VarChar(128)
+  providerPaymentId      String?              @map("provider_payment_id") @db.VarChar(128)
+  providerStatus         String?              @map("provider_status") @db.VarChar(64)
+  providerStatusDetail   String?              @map("provider_status_detail") @db.VarChar(128)
+  providerRequestedAt    DateTime?            @map("provider_requested_at") @db.Timestamptz(3)
+  dispatchLeaseUntil     DateTime?            @map("dispatch_lease_until") @db.Timestamptz(3)
+  expiresAt              DateTime?            @map("expires_at") @db.Timestamptz(3)
+  completedAt            DateTime?            @map("completed_at") @db.Timestamptz(3)
+  createdAt              DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime             @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([paymentId, sequence])
+  @@unique([paymentId, idempotencyKey])
+  @@unique([provider, providerIdempotencyKey])
+  @@map("payment_attempts")
 }
 
 model OrderItem {

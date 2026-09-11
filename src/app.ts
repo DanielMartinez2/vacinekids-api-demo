@@ -16,13 +16,23 @@ import { createCustomerRouter } from "./modules/customer/customer.routes";
 import { createCustomerService, type CustomerService } from "./modules/customer/customer.service";
 import { createOrderService, type OrderService } from "./modules/orders/orders.service";
 import { createOrdersRouter } from "./modules/orders/orders.routes";
+import { createPaymentsRouter } from "./modules/payments/payments.routes";
+import { createPaymentService, type PaymentService } from "./modules/payments/payments.service";
+import { DemoPaymentProvider } from "./modules/payments/providers/demo-payment-provider";
+import type { PaymentRateLimitOptions } from "./middlewares/payment-rate-limit";
 
 const databaseSchema = parseDatabaseUrl(env.DATABASE_URL).schema ?? "public";
 
 export const createApp = (
   authService: AuthService = createAuthService(prisma, undefined, databaseSchema),
   customerService: CustomerService = createCustomerService(prisma, databaseSchema),
-  orderService: OrderService = createOrderService(prisma)
+  orderService: OrderService = createOrderService(prisma, undefined, undefined, databaseSchema),
+  paymentService: PaymentService = createPaymentService(
+    prisma,
+    new DemoPaymentProvider(env.PAYMENT_PROVIDER === "DEMO" && env.PAYMENT_DEMO_ENABLED),
+    { dispatchLeaseSeconds: env.PAYMENT_DISPATCH_LEASE_SECONDS, schema: databaseSchema }
+  ),
+  paymentRateLimitOptions?: PaymentRateLimitOptions
 ) => {
   const app = express();
 
@@ -44,6 +54,7 @@ export const createApp = (
   app.use("/api/v1", writeGuard(env.FRONTEND_URL));
   app.use("/api/v1/auth", express.json({ limit: "8kb" }));
   app.use(["/api/v1/profile", "/api/v1/dependents"], express.json({ limit: "16kb" }));
+  app.use("/api/v1/orders/:orderId/payment-attempts", express.json({ limit: "16kb" }));
   app.use(["/api/v1/checkout", "/api/v1/orders"], express.json({ limit: "32kb" }));
   app.use(express.json({ limit: "1mb" }));
   app.use(cookieParser());
@@ -54,13 +65,14 @@ export const createApp = (
       data: {
         name: "VacineKids API demo",
         version: "v1",
-        resources: ["vaccines", "packages", "age-ranges", "profile", "dependents", "checkout", "orders"]
+        resources: ["vaccines", "packages", "age-ranges", "profile", "dependents", "checkout", "orders", "payments"]
       },
       error: null
     });
   });
   app.use("/api/v1/auth", createAuthRouter(authService, env.NODE_ENV));
   app.use("/api/v1", createCustomerRouter(authService, customerService, env.NODE_ENV));
+  app.use("/api/v1/orders", createPaymentsRouter(authService, paymentService, env.NODE_ENV, paymentRateLimitOptions));
   app.use("/api/v1", createOrdersRouter(authService, orderService, env.NODE_ENV));
   app.use("/api/v1", createCatalogRouter(authService, env.NODE_ENV));
 
